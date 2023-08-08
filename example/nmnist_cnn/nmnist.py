@@ -4,10 +4,12 @@ import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import Dataset, DataLoader
 import slayerSNN as snn
-from learningStats import learningStats
-import zipfile
+import os
+import pickle
 
-netParams = snn.params('nmnist.yaml')
+example_dir = os.path.dirname(__file__)
+
+netParams = snn.params(os.path.join(example_dir, 'nmnist.yaml'))
 
 
 # Dataset definition
@@ -61,12 +63,12 @@ class nmnistNetwork(torch.nn.Module):
 
 
 if __name__ == '__main__':
-    # Extract NMNIST samples
-    import os
-    with zipfile.ZipFile('NMNISTsmall.zip') as zip_file:
-        for member in zip_file.namelist():
-            if not os.path.exists('./' + member):
-                zip_file.extract(member, './')
+    # # Extract NMNIST samples
+    # import os
+    # with zipfile.ZipFile('NMNISTsmall.zip') as zip_file:
+    #     for member in zip_file.namelist():
+    #         if not os.path.exists('./' + member):
+    #             zip_file.extract(member, './')
 
     # Define the cuda device to run the code on.
     device = torch.device('cuda')
@@ -86,20 +88,22 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
 
     # Dataset and dataLoader instances.
-    trainingSet = nmnistDataset(datasetPath=netParams['training']['path']['dir_train'],
-                                sampleFile=netParams['training']['path']['list_train'],
-                                samplingTime=netParams['simulation']['Ts'],
-                                sampleLength=netParams['simulation']['tSample'])
+    trainingSet = nmnistDataset(
+        datasetPath=os.path.join(example_dir, '../..', netParams['training']['path']['dir_train']),
+        sampleFile=os.path.join(example_dir, '../..', netParams['training']['path']['list_train']),
+        samplingTime=netParams['simulation']['Ts'],
+        sampleLength=netParams['simulation']['tSample'])
     trainLoader = DataLoader(dataset=trainingSet, batch_size=12, shuffle=False, num_workers=4)
 
-    testingSet = nmnistDataset(datasetPath=netParams['training']['path']['dir_test'],
-                               sampleFile=netParams['training']['path']['list_test'],
-                               samplingTime=netParams['simulation']['Ts'],
-                               sampleLength=netParams['simulation']['tSample'])
+    testingSet = nmnistDataset(
+        datasetPath=os.path.join(example_dir, '../..', netParams['training']['path']['dir_test']),
+        sampleFile=os.path.join(example_dir, '../..', netParams['training']['path']['list_test']),
+        samplingTime=netParams['simulation']['Ts'],
+        sampleLength=netParams['simulation']['tSample'])
     testLoader = DataLoader(dataset=testingSet, batch_size=12, shuffle=False, num_workers=4)
 
     # Learning stats instance.
-    stats = learningStats()
+    stats = snn.utils.stats()
 
     # # Visualize the network.
     # for i in range(5):
@@ -158,6 +162,14 @@ if __name__ == '__main__':
 
         # Update stats.
         stats.update()
+
+    # Save trained network.
+    os.makedirs(os.path.join(example_dir, 'out'))
+    torch.save(net, os.path.join(example_dir, 'out/nmnist.pt'))
+
+    # Save statistics
+    with open(os.path.join(example_dir, 'out/nmnist.pkl'), 'wb') as stats_file:
+        pickle.dump(stats, stats_file)
 
     # Plot the results.
     plt.figure(1)

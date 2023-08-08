@@ -131,3 +131,10 @@ dmypy.json
 # VS Code
 .vscode/
 *.code-workspace
+
+# Datasets
+data/datasets/
+data/datasets
+
+# Examples output
+example/**/out
