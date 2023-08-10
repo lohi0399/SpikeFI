@@ -8,11 +8,22 @@ from typing import List, Tuple, Callable
 
 
 class FaultSite:
-    def __init__(self, layer: int = None, dim0: int = None, chw: Tuple[int] = None) -> None:
-        self.layer = layer
+    def __init__(self, layer_name: str = None, dim0: int = None, chw: Tuple[int] = None) -> None:
+        self.layer = layer_name
         self.dim0 = dim0
-        self.chw = chw
+        self.set_chw(chw)
+
+    def set_chw(self, chw: Tuple[int]) -> None:
+        if chw:
+            assert len(chw) == 3
+
         self.channel, self.height, self.width = [chw[i] for i in range(3)] if chw else 3*[None]
+
+    def get_chw(self) -> Tuple[int]:
+        return (self.channel, self.height, self.width)
+
+    def is_random(self) -> bool:
+        return bool(self.layer)
 
     def __repr__(self) -> str:
         s = "Fault Site:\n"
@@ -44,7 +55,9 @@ class FaultModel:
         s = f"Fault Model: '{name}'\n"
         s += f"  - Target: {self.target}\n"
         s += f"  - Method: {self.method.__name__}\n"
-        s += f"  - Arguments: {str(*self.args)}"
+        s += "  - Arguments:"
+        for i, arg in enumerate(self.args):
+            s += f"\n    ~ Arg {i+1}: {arg}"
         return s
 
     def perturb(self, original: float) -> float:
@@ -132,6 +145,6 @@ class Fault:
         if self.is_multiple():
             s += f"+ Multiple Fault\n+ Occurences: {self.occurences}"
         else:
-            s += "Single Fault"
+            s += "+ Single Fault"
 
         return s

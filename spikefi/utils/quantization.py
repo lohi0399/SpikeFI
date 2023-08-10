@@ -31,3 +31,10 @@ class Quantizer:
         assert q >= self.qmin and q <= self.qmax
 
         return self.scale * (q - self.zero_point)
+
+    def __repr__(self) -> str:
+        s = "Quantizer:\n"
+        s += f"  - Precision: {self.precision} bits\n"
+        s += f"  - Real values range: {self.xmin} to {self.xmax}\n"
+        s += f"  - Quantized values range: {self.qmin} to {self.qmax}"
+        return s
