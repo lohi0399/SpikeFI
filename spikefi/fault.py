@@ -25,10 +25,15 @@ class FaultSite:
     def is_random(self) -> bool:
         return bool(self.layer)
 
+    @staticmethod
+    def pos2str(x: int, c: str = '*') -> str:
+        return c if x is None else x
+
     def __repr__(self) -> str:
         s = "Fault Site:\n"
-        s += f"  - Layer #: {self.layer or '-'}\n"
-        s += f"  - Position: ({self.dim0 or '-'}, {self.channel or '-'}, {self.height or '-'}, {self.width or '-'})"
+        s += f"  - Layer: {self.layer or '*'}\n"
+        s += f"  - Position: ({FaultSite.pos2str(self.dim0)}, {FaultSite.pos2str(self.channel)}, " + \
+            f"{FaultSite.pos2str(self.height)}, {FaultSite.pos2str(self.width)})"
         return s
 
 
@@ -41,8 +46,6 @@ class FaultModel:
         self.target = target
         self.method = method
         self.args = args
-
-        self.is_synaptic = target == 'w'
 
         self.original = None
         self.perturbed = None
