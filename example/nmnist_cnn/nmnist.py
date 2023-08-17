@@ -7,9 +7,11 @@ import slayerSNN as snn
 import os
 import pickle
 
-example_dir = os.path.dirname(__file__)
+# TODO: Rename variables/classes according to naming rules and remove unecessary code
 
-netParams = snn.params(os.path.join(example_dir, 'nmnist.yaml'))
+example_dir = os.path.dirname(__file__)
+net_params = snn.params(os.path.join(example_dir, 'nmnist.yaml'))
+test_only = True
 
 
 # Dataset definition
@@ -38,10 +40,10 @@ class nmnistDataset(Dataset):
 
 # Network definition
 class nmnistNetwork(torch.nn.Module):
-    def __init__(self, netParams):
+    def __init__(self, net_params):
         super(nmnistNetwork, self).__init__()
         # initialize slayer
-        slayer = snn.layer(netParams['neuron'], netParams['simulation'])
+        slayer = snn.layer(net_params['neuron'], net_params['simulation'])
         self.slayer = slayer
         # define network functions
         self.SC1 = slayer.conv(2, 16, 5, padding=1)
@@ -77,29 +79,29 @@ if __name__ == '__main__':
     # deviceIds = [2, 3, 1]
 
     # Create network instance.
-    net = nmnistNetwork(netParams).to(device)
+    net = nmnistNetwork(net_params).to(device)
     # Split the network to run over multiple GPUs
-    # net = torch.nn.DataParallel(Network(netParams).to(device), device_ids=deviceIds)
+    # net = torch.nn.DataParallel(Network(net_params).to(device), device_ids=deviceIds)
 
     # Create snn loss instance.
-    error = snn.loss(netParams).to(device)
+    error = snn.loss(net_params).to(device)
 
     # Define optimizer module.
     optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
 
     # Dataset and dataLoader instances.
     trainingSet = nmnistDataset(
-        datasetPath=os.path.join(example_dir, '../..', netParams['training']['path']['dir_train']),
-        sampleFile=os.path.join(example_dir, '../..', netParams['training']['path']['list_train']),
-        samplingTime=netParams['simulation']['Ts'],
-        sampleLength=netParams['simulation']['tSample'])
+        datasetPath=os.path.join(example_dir, '../..', net_params['training']['path']['dir_train']),
+        sampleFile=os.path.join(example_dir, '../..', net_params['training']['path']['list_train']),
+        samplingTime=net_params['simulation']['Ts'],
+        sampleLength=net_params['simulation']['tSample'])
     trainLoader = DataLoader(dataset=trainingSet, batch_size=12, shuffle=False, num_workers=4)
 
     testingSet = nmnistDataset(
-        datasetPath=os.path.join(example_dir, '../..', netParams['training']['path']['dir_test']),
-        sampleFile=os.path.join(example_dir, '../..', netParams['training']['path']['list_test']),
-        samplingTime=netParams['simulation']['Ts'],
-        sampleLength=netParams['simulation']['tSample'])
+        datasetPath=os.path.join(example_dir, '../..', net_params['training']['path']['dir_test']),
+        sampleFile=os.path.join(example_dir, '../..', net_params['training']['path']['list_test']),
+        samplingTime=net_params['simulation']['Ts'],
+        sampleLength=net_params['simulation']['tSample'])
     testLoader = DataLoader(dataset=testingSet, batch_size=12, shuffle=False, num_workers=4)
 
     # Learning stats instance.
@@ -109,6 +111,28 @@ if __name__ == '__main__':
     # for i in range(5):
     #   input, target, label = trainingSet[i]
     #   snn.io.showTD(snn.io.spikeArrayToEvent(input.reshape((2, 34, 34, -1)).cpu().data.numpy()))
+
+    if test_only:
+        net = torch.load(os.path.join(example_dir, 'out/nmnist.pt'))
+
+        # Testing loop.
+        for i, (input, target, label) in enumerate(testLoader, 0):
+            input = input.to(device)
+            target = target.to(device)
+
+            output = net.forward(input)
+
+            stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
+            stats.testing.numSamples += len(label)
+
+            loss = error.numSpikes(output, target)
+            stats.testing.lossSum += loss.cpu().data.item()
+            stats.print(0, i)
+
+        # Update stats.
+        stats.update()
+
+        exit()
 
     # training loop
     for epoch in range(100):
@@ -164,7 +188,7 @@ if __name__ == '__main__':
         stats.update()
 
     # Save trained network.
-    os.makedirs(os.path.join(example_dir, 'out'))
+    os.makedirs(os.path.join(example_dir, 'out'), exist_ok=True)
     torch.save(net, os.path.join(example_dir, 'out/nmnist.pt'))
 
     # Save statistics
