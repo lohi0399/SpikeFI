@@ -104,7 +104,7 @@ class FaultModel:
         return self.target == 'p'
 
     @staticmethod
-    def set_value(original: Tensor, value: float) -> float:
+    def set_value(_, value: float) -> float:
         return value
 
     @staticmethod
@@ -126,6 +126,26 @@ class FaultModel:
         return qua.dequantize(qua.quantize(original) ^ 2 ** bit)
 
 
+class ParametricFaultModel(FaultModel):
+    def __init__(self, param_name: str, param_method: Callable[..., float], *param_args) -> None:
+        super().__init__('p', FaultModel.set_value)
+
+        self.param_name = param_name
+        self.param_method = param_method
+        self.param_args = param_args
+
+        self.param_original = None
+        self.param_perturbed = None
+
+        self.flayer = None
+
+    def perturb_param(self, param_original: float) -> float:
+        self.param_original = param_original
+        self.param_perturbed = self.param_method(param_original, *self.param_args)
+
+        return self.param_perturbed
+
+
 # Neuron fault models
 class DeadNeuron(FaultModel):
     def __init__(self) -> None:
@@ -137,10 +157,9 @@ class SaturatedNeuron(FaultModel):
         super().__init__('z', FaultModel.set_value, 1.)
 
 
-class ParametricNeuron(FaultModel):
-    def __init__(self, param: str, percentage: float) -> None:
-        super().__init__('p', FaultModel.mul_value, percentage)
-        self.param = param
+class ParametricNeuron(ParametricFaultModel):
+    def __init__(self, param_name: str, percentage: float) -> None:
+        super().__init__(param_name, FaultModel.mul_value, percentage)
 
 
 # Synapse fault models
@@ -191,18 +210,26 @@ class Fault:
 class FaultRound:
     def __init__(self, lay_names: List[str]) -> None:
         self.round = {name: [] for name in lay_names}
-        self.hooks_map = {name: 2*[False] for name in lay_names}        
-        self.stats = snn.utils.stats() # TODO: Replace with custom stats object ?
+        self.stats = snn.utils.stats()  # TODO: Replace with custom stats object ?
+        self.keys = lay_names
+        self.map_faults()
 
     def insert(self, faults: List[Fault]) -> None:
         for f in faults:
+            if f.model.is_parametric():
+                # Parametric faults have one site only, since fault model depends on the neuron's output
+                for s in f.sites:
+                    self.round[s.layer].append(Fault(f.model, [s]))
+                continue
+
             for lay_name, lay_faults in self.round.items():
                 lay_sites = [s for s in f.sites if s.layer == lay_name]
                 if not lay_sites:
                     continue
 
-                self.hooks_map[lay_name][0] = f.model.is_synaptic() or f.model.is_parametric()
-                self.hooks_map[lay_name][1] = f.model.is_neuronal()
+                self.fault_map[lay_name]['z'] |= f.model.is_neuronal()
+                self.fault_map[lay_name]['p'] |= f.model.is_parametric()
+                self.fault_map[lay_name]['w'] |= f.model.is_synaptic()
 
                 try:
                     lay_fault = next(lay_fault for lay_fault in lay_faults if lay_fault.model == f.model)
@@ -215,7 +242,7 @@ class FaultRound:
                 lay_fault.sort()
 
     def get_faults(self, layer_name: str = None, targets: str = None) -> List[Fault]:
-        faults = self.round[layer_name] if layer_name else self.round.values()
+        faults = self.round[layer_name] if layer_name else [f for lay_faults in self.round.values() for f in lay_faults]
 
         if targets:
             return [f for f in faults if f.model.target in targets]
@@ -230,6 +257,22 @@ class FaultRound:
 
     def get_parametric_faults(self, layer_name: str = None) -> List[Fault]:
         return self.get_faults(layer_name, 'p')
+
+    def has_faults(self, layer_name: str = None, targets: str = None) -> bool:
+        lay_names = [layer_name] if layer_name else self.keys
+        if not targets:
+            targets = 'zpw'
+
+        return any(self.fault_map[lay_name][t] for lay_name in lay_names for t in targets)
+
+    def has_synapse_faults(self, layer_name: str = None) -> bool:
+        return self.has_faults(layer_name, 'w')
+
+    def has_neuron_faults(self, layer_name: str = None) -> bool:
+        return self.has_faults(layer_name, 'zp')
+
+    def has_parametric_faults(self, layer_name: str = None) -> bool:
+        return self.has_faults(layer_name, 'p')
 
     def remove(self, faults: List[Fault]) -> None:
         for f in faults:
@@ -249,18 +292,19 @@ class FaultRound:
                 except StopIteration:
                     continue
 
-        self.map_hooks()
+        self.map_faults()
 
-    def map_hooks(self) -> Dict[str, List[bool]]:
-        self.hooks_map = {name: 2*[False] for name in list(self.round.keys())}
+    def map_faults(self) -> Dict[str, Dict[str, bool]]:
+        self.fault_map = {name: {t: False for t in FaultModel.targets.values()} for name in self.keys}
 
         for lay_faults in self.round.values():
             for f in lay_faults:
                 for s in f.sites:
-                    self.hooks_map[s.layer][0] = f.model.is_synaptic() or f.model.is_parametric()
-                    self.hooks_map[s.layer][1] = f.model.is_neuronal()
+                    self.fault_map[s.layer]['z'] |= f.model.is_neuronal()
+                    self.fault_map[s.layer]['p'] |= f.model.is_parametric()
+                    self.fault_map[s.layer]['w'] |= f.model.is_synaptic()
 
-        return self.hooks_map
+        return self.fault_map
 
     def __contains__(self, fault: Fault) -> bool:
         return any(fault in inner_faults for inner_faults in self.round.values())
