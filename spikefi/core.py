@@ -1,17 +1,20 @@
-from .fault import Fault, FaultModel, FaultRound
-from slayerSNN.slayer import _convLayer, _denseLayer, spikeLayer
-from typing import List, Tuple
-import torch
 import copy
 import random
+import types
+from typing import List, Tuple
+
+import torch
 from torch.utils.data import DataLoader
 from torch.utils.hooks import RemovableHandle
+
 import slayerSNN as snn
+from slayerSNN.slayer import _convLayer, _denseLayer, spikeLayer
+
+from .fault import Fault, FaultModel, FaultSite, FaultRound
 
 # TODO: Logging
 # TODO: Documentation
 # TODO: Order methods and fix their names
-# TODO: Tidy up imports
 
 
 def _spike(self: spikeLayer, membrane_potential):

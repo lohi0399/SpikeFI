@@ -1,7 +1,9 @@
-from .utils.quantization import Quantizer
 from typing import List, Dict, Tuple, Callable
 from torch import Tensor
+
 import slayerSNN as snn
+
+from .utils.quantization import Quantizer
 
 # TODO: Allow for selection of the fault's effectiveness in Time ?
 # e.g., for either a neuron, or a synapse fault:
