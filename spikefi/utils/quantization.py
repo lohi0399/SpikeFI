@@ -1,44 +1,39 @@
+from typing import Tuple
+
+import torch
 from torch import Tensor
 
 
-class Quantizer:
-    def __init__(self, precision: int, xmin: float, xmax: float, qmin: int = 0) -> None:
-        self.precision = precision
+def q2i_dtype(qdtype: torch.dtype) -> torch.dtype:
+    if qdtype is torch.quint8:
+        idtype = torch.uint8
+    elif qdtype is torch.qint8:
+        idtype = torch.int8
+    elif qdtype is torch.qint32:
+        idtype = torch.int32
+    else:
+        raise AssertionError("The desired data type of returned tensor has to be " +
+                             "one of the quantized dtypes: torch.quint8, torch.qint8, torch.qint32")
 
-        self.xmin = xmin
-        self.xmax = xmax
+    return idtype
 
-        self.qmin = qmin
-        self.qmax = 2. ** self.precision - 1 - self.qmin
 
-        self.scale = (self.xmax - self.xmin) / (self.qmax - self.qmin)
+def quant_args_from_range(xmin: float | Tensor, xmax: float | Tensor,
+                          dtype: torch.dtype) -> Tuple[Tensor, Tensor, torch.dtype]:
+    if not torch.is_tensor(xmin):
+        xmin = torch.tensor(xmin)
+    if not torch.is_tensor(xmax):
+        xmax = torch.tensor(xmax)
+    xmin = xmin.float()
+    xmax = xmax.float()
 
-        self.zero_point = self.qmin - self.xmin / self.scale
-        if self.zero_point < self.qmin:
-            self.zero_point = self.qmin
-        elif self.zero_point > self.qmax:
-            self.zero_point = self.qmax
-        self.zero_point = int(self.zero_point)
+    assert xmin.size() == xmax.size()
 
-    def quantize(self, x: Tensor) -> Tensor:
-        assert x >= self.xmin and x <= self.xmax
+    dt_info = torch.iinfo(q2i_dtype(dtype))
+    qmin = dt_info.min
+    qmax = dt_info.max
 
-        q = self.zero_point + x / self.scale
+    scale = ((xmax - xmin) / (qmax - qmin))
+    zero_point = torch.clip(qmin - xmin / scale, qmin, qmax).int()
 
-        q.clamp_(self.qmin, self.qmax).round_()
-        q = q.round().byte()
-
-        return q
-
-    def dequantize(self, q: Tensor) -> Tensor:
-        assert q >= self.qmin and q <= self.qmax
-
-        return self.scale * (q - self.zero_point)
-
-    def __repr__(self) -> str:
-        s = "Quantizer:\n"
-        s += f"  - Precision: {self.precision} bits\n"
-        s += f"  - Real values range: {self.xmin} to {self.xmax}\n"
-        s += f"  - Quantized values range: {self.qmin} to {self.qmax}"
-
-        return s
+    return scale, zero_point, dtype
