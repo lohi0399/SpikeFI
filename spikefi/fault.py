@@ -73,8 +73,8 @@ class FaultModel:
         self.method = method
         self.args = args
 
-        self.original = None
-        self.perturbed = None
+        self.original = {}
+        self.perturbed = {}
 
     def __eq__(self, __value: object) -> bool:
         if not isinstance(__value, FaultModel):
@@ -104,16 +104,23 @@ class FaultModel:
     def is_synaptic(self) -> bool:
         return self.target is FaultTarget.WEIGHT
 
-    def perturb(self, original: float | Tensor) -> float | Tensor:
-        self.original = original
-        self.perturbed = self.method(original, *self.args)
+    def is_perturbed(self, site_key: str) -> bool:
+        return not site_key and site_key in self.original and site_key in self.perturbed
 
-        return self.perturbed
+    # Omitting the site key means no restoration will be needed
+    def perturb(self, original: float | Tensor, site_key: str = '') -> float | Tensor:
+        self.original[site_key] = original
+        self.perturbed[site_key] = self.method(original, *self.args)
 
-    def restore(self) -> float | Tensor:
-        tore = self.original
-        self.original = None
-        self.perturbed = None
+        return self.perturbed[site_key]
+
+    def restore(self, site_key: str) -> float | Tensor:  # Practically used only for synaptic weigths restoration
+        if not self.is_perturbed(site_key):
+            return None
+
+        tore = self.original[site_key]
+        self.original.pop(site_key)
+        self.perturbed.pop(site_key)
 
         return tore
 
@@ -164,6 +171,7 @@ class ParametricFaultModel(FaultModel):
 
         self.flayer = None
 
+    # Parametric faults have only one site, so original and perturbed variables are scalars
     def perturb_param(self, param_original: float | Tensor) -> float | Tensor:
         self.param_original = param_original
         self.param_perturbed = self.param_method(param_original, *self.param_args)
@@ -213,6 +221,7 @@ class BitflippedSynapse(FaultModel):
 class Fault:
     def __init__(self, model: FaultModel, sites: List[FaultSite] = [], occurrences: int = None) -> None:
         self.model = model
+        # TODO: Use a set instead of a list for sites?
         self.sites = sites + [FaultSite() for _ in range(max(len(sites), occurrences or 1) - len(sites))]
 
     def __eq__(self, __value: object) -> bool:
@@ -240,31 +249,42 @@ class Fault:
 
 
 class FaultRound:
+    # TODO: Check if layer names are still needed after revision
     def __init__(self, lay_names: List[str]) -> None:
         self.round = {name: [] for name in lay_names}
         self.stats = snn.utils.stats()  # TODO: Replace with custom stats object ?
         self.keys = lay_names
-        self._create_fault_map()
+        self.fault_map = self._create_fault_map()
+
+    def __bool__(self) -> bool:
+        return self.round and any(lay_faults for lay_faults in self.round.values())
 
     def __contains__(self, fault: Fault) -> bool:
         return any(fault in inner_faults for inner_faults in self.round.values())
 
+    def __len__(self) -> int:
+        return len(self.round)
+
+    # TODO: Show each round in a new line
     def __repr__(self) -> str:
         return str(self.round)
 
     def _create_fault_map(self) -> Dict[str, Dict[FaultTarget, bool]]:
-        self.fault_map = {name: {t: False for t in FaultTarget} for name in self.keys}
+        fault_map = {name: {t: False for t in FaultTarget} for name in self.keys}
 
         for lay_faults in self.round.values():
             for f in lay_faults:
                 for s in f.sites:
-                    self.fault_map[s.layer][FaultTarget.Z] |= f.model.is_neuronal()
-                    self.fault_map[s.layer][FaultTarget.P] |= f.model.is_parametric()
-                    self.fault_map[s.layer][FaultTarget.W] |= f.model.is_synaptic()
+                    fault_map[s.layer][FaultTarget.Z] |= f.model.is_neuronal()
+                    fault_map[s.layer][FaultTarget.P] |= f.model.is_parametric()
+                    fault_map[s.layer][FaultTarget.W] |= f.model.is_synaptic()
 
-        return self.fault_map
+        return fault_map
 
     def get_faults(self, layer_name: str = None, targets: FaultTarget = FaultTarget(0)) -> List[Fault]:
+        if layer_name and layer_name not in self.keys:
+            return []
+
         faults = self.round[layer_name] if layer_name else [f for lay_faults in self.round.values() for f in lay_faults]
 
         if targets:
@@ -282,6 +302,9 @@ class FaultRound:
         return self.get_faults(layer_name, FaultTarget.WEIGHT)
 
     def has_faults(self, layer_name: str = None, targets: FaultTarget = FaultTarget.all()) -> bool:
+        if layer_name and layer_name not in self.keys:
+            return False
+
         lay_names = [layer_name] if layer_name else self.keys
 
         return any(self.fault_map[lay_name][t] for lay_name in lay_names for t in targets)
@@ -295,32 +318,26 @@ class FaultRound:
     def has_synapse_faults(self, layer_name: str = None) -> bool:
         return self.has_faults(layer_name, FaultTarget.WEIGHT)
 
+    # TODO: Check for duplicates in fault sites (a set does not allow it by definition)
     def insert(self, faults: List[Fault]) -> None:
         for f in faults:
-            if f.model.is_parametric():
+            for s in f.sites:
                 # Parametric faults have one site only, since fault model depends on the neuron's output
-                for s in f.sites:
+                if f.model.is_parametric():
+                    self.fault_map[s.layer][FaultTarget.P] = True
                     self.round[s.layer].append(Fault(f.model, [s]))
-                continue
-
-            for lay_name, lay_faults in self.round.items():
-                lay_sites = [s for s in f.sites if s.layer == lay_name]
-                if not lay_sites:
                     continue
 
-                self.fault_map[lay_name][FaultTarget.Z] |= f.model.is_neuronal()
-                self.fault_map[lay_name][FaultTarget.P] |= f.model.is_parametric()
-                self.fault_map[lay_name][FaultTarget.W] |= f.model.is_synaptic()
+                self.fault_map[s.layer][FaultTarget.Z] |= f.model.is_neuronal()
+                self.fault_map[s.layer][FaultTarget.W] |= f.model.is_synaptic()
 
+                lay_faults = self.round[s.layer]
                 try:
                     lay_fault = next(lay_fault for lay_fault in lay_faults if lay_fault.model == f.model)
-                    lay_fault.sites.extend(lay_sites)
+                    lay_fault.sites.append(s)
+                    lay_fault.sort()
                 except StopIteration:
-                    lay_faults.append(Fault(f.model, lay_sites))
-
-        for _, lay_faults in self.round.items():
-            for lay_fault in lay_faults:
-                lay_fault.sort()
+                    lay_faults.append(Fault(f.model, [s]))
 
     def remove(self, faults: List[Fault]) -> None:
         for f in faults:
@@ -340,4 +357,4 @@ class FaultRound:
                 except StopIteration:
                     continue
 
-        self._create_fault_map()
+        self.fault_map = self._create_fault_map()

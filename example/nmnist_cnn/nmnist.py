@@ -54,12 +54,12 @@ class nmnistNetwork(torch.nn.Module):
         self.SF1 = slayer.dense((8, 8, 64), 10)
 
     def forward(self, s_in):
-        s_out1 = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))    # 32, 32, 16
-        s_out2 = self.slayer.spike(self.slayer.psp(self.SP1(s_out1)))  # 16, 16, 16
-        s_out3 = self.slayer.spike(self.slayer.psp(self.SC2(s_out2)))  # 16, 16, 32
-        s_out4 = self.slayer.spike(self.slayer.psp(self.SP2(s_out3)))  #  8,  8, 32
-        s_out5 = self.slayer.spike(self.slayer.psp(self.SC3(s_out4)))  #  8,  8, 64
-        s_out  = self.slayer.spike(self.slayer.psp(self.SF1(s_out5)))  # 10
+        s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 32, 32, 16
+        s_out = self.slayer.spike(self.slayer.psp(self.SP1(s_out)))  # 16, 16, 16
+        s_out = self.slayer.spike(self.slayer.psp(self.SC2(s_out)))  # 16, 16, 32
+        s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  #  8,  8, 32
+        s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  #  8,  8, 64
+        s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 10
 
         return s_out
 

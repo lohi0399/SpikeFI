@@ -1,286 +1,280 @@
 import copy
 import random
-import types
-from typing import List, Tuple
+from typing import Any, Callable, List, Tuple
 
 import torch
+from torch import nn, Tensor
 from torch.utils.data import DataLoader
 from torch.utils.hooks import RemovableHandle
 
 import slayerSNN as snn
 from slayerSNN.slayer import _convLayer, _denseLayer, spikeLayer
 
-from .fault import Fault, FaultModel, FaultSite, FaultRound
-
-# TODO: Logging
-# TODO: Documentation
-# TODO: Order methods and fix their names
-
-
-def _spike(self: spikeLayer, membrane_potential):
-    return self(membrane_potential)
+from .fault import Fault, FaultModel, FaultRound, FaultSite
 
 
 class Campaign:
-    def __init__(self, net: torch.nn.Module, shape_in: Tuple[int], spike_layer: spikeLayer = None) -> None:
+    def __init__(self, net: nn.Module, shape_in: Tuple[int, int, int], slayer: spikeLayer) -> None:
         self.golden_net = net
         self.faulty_net = copy.deepcopy(net)
         self.faulty_net.eval()
         self.device = next(net.parameters()).device
+        self.slayer = slayer
 
-        if spike_layer:
-            self.slayer = spike_layer
-        else:
-            try:
-                self.slayer = [ch for ch in self.faulty_net.children() if type(ch) is spikeLayer][0]
-            except IndexError:
-                raise AssertionError("Spike layer not provided")
-
-        self.slayer.forward = types.MethodType(snn.slayer.spikeLayer.spike, self.slayer)
-        self.slayer.spike = types.MethodType(_spike, self.slayer)
-
-        self.injectables = {name: lay
-                            for name, lay in self.faulty_net.named_children()
-                            if type(lay) is _convLayer or type(lay) is _denseLayer}
-        self.layer_names = list(self.injectables.keys())
-
-        self.shape_in = shape_in
+        self.layers = {}
+        self.names_lay = []
+        self.names_inj = []
         self.shapes_lay = {}
         self.shapes_wei = {}
-        self.assume_shapes()
+        self.injectables = {}
+        self._assume_layer_info(shape_in)
 
-        self.rounds = [FaultRound(self.layer_names)]
+        self.rounds = [FaultRound(self.names_inj)]
 
     def __repr__(self) -> str:
+        # TODO: Implement
         pass
 
-    def inject(self, faults: List[Fault], round_idx: int = -1) -> List[Fault]:
-        assert round_idx >= -len(self.rounds) and round_idx < len(self.rounds)
+    def _assume_layer_info(self, shape_in: Tuple[int, int, int]) -> None:
+        handles = []
+        for name, child in self.faulty_net.named_children():
+            h = child.register_forward_hook(self._layer_info_hook_wrapper(name))
+            handles.append(h)
 
-        inj_faults = self.assert_injected_faults(faults)
+        dummy_input = torch.rand((1, *shape_in, 1)).to(self.device)
+        self.faulty_net.forward(dummy_input)
+
+        for h in handles:
+            h.remove()
+
+    def _layer_info_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...], Tensor], None]:
+        def layer_info_hook(layer: nn.Module, _, output: Tensor) -> None:
+            self.layers[layer_name] = layer
+            self.names_lay.append(layer_name)
+
+            self.shapes_lay[layer_name] = tuple(output.shape[1:4])
+            self.shapes_wei[layer_name] = tuple(layer.weight.shape[0:4])
+
+            if type(layer) in [_convLayer, _denseLayer]:
+                self.injectables[layer_name] = layer
+                self.names_inj.append(layer_name)
+
+        return layer_info_hook
+
+    def inject(self, faults: List[Fault], round_idx: int = -1) -> List[Fault]:
+        assert -len(self.rounds) <= round_idx < len(self.rounds)
+
+        inj_faults = self._assert_injected_faults(faults)
         self.define_random_faults(inj_faults)
 
         self.rounds[round_idx].insert(inj_faults)
 
         return inj_faults
 
-    def then_inject(self, faults: List[Fault]) -> List[Fault]:
-        self.rounds.append(FaultRound(self.layer_names))
+    # TODO: Assert parameter names for parametric faults
+    def _assert_injected_faults(self, faults: List[Fault]) -> List[Fault]:
+        valid_faults = []
+        for f in faults:
+            fc = copy.deepcopy(f)
+            is_syn = fc.model.is_synaptic()
+            shapes = self.shapes_wei if is_syn else self.shapes_lay
 
-        return self.inject(faults, -1)
+            for s in fc.sites:
+                v = s.is_random() or s.layer in self.injectables
+                if v:
+                    if is_syn:
+                        v &= not s.dim0 or -shapes[s.layer][0] <= s.dim0 < shapes[s.layer][0]
 
-    def eject(self, faults: List[Fault] = None, round_idx: int = None) -> None:
-        # Eject all faults
-        if not faults:
-            self.rounds.clear()
-            self.rounds.append(FaultRound(self.layer_names))
-            return
+                    chw = s.get_chw()
+                    for i in range(3):
+                        v &= not chw[i] or chw[i] <= chw[i] < shapes[s.layer][i+is_syn]
 
-        # Eject a group of faults, optionally from a specific round
-        if round_idx is None:
-            for r in self.rounds:
-                r.remove(faults)
-        else:
-            self.rounds[round_idx].remove(faults)
+                if not v:
+                    fc.sites.remove(s)
 
-    def register_hooks(self, round: FaultRound) -> List[RemovableHandle]:
-        if not round.has_neuron_faults():
-            return []
+            if fc.sites:
+                valid_faults.append(fc)
 
-        handles = []
-        # Neuron faults hook
-        handles.append(self.slayer.register_forward_hook(self.neuron_hook_wrapper(round)))
-
-        # Parametric faults hook
-        for lay_name in self.layer_names[1:]:
-            if round.has_parametric_faults(lay_name):
-                handles.append(self.slayer.register_forward_hook(self.parametric_hook_wrapper(round)))
-                break
-
-        # 1st layer's parametric faults pre_hook
-        if round.has_parametric_faults(self.layer_names[0]):
-            handles.append(self.faulty_net.register_forward_pre_hook(self.parametric_pre_hook_wrapper(round)))
-
-        return handles
-
-    def alter_synapses(self, round: FaultRound, action: str) -> None:
-        a = action == 'perturb'
-        z = action == 'restore'
-
-        for lay_name, lay in self.injectables.items():
-            for f in round.get_synapse_faults(lay_name):
-                for s in f.sites:
-                    if a:
-                        # Perturb weights for synapse faults (no pre-hook needed)
-                        lay.weight[s.unroll()] = f.model.perturb(lay.weight[s.unroll()])
-                    elif z:
-                        # Restore weights after the end of the round (no hook needed)
-                        lay.weight[s.unroll()] = f.model.restore()
-
-    def create_dummy_layers(self, round: FaultRound) -> None:
-        for f in round.get_parametric_faults():
-            f.model.flayer = copy.deepcopy(self.slayer)
-            f.model.flayer.neuron[f.model.param_name] = f.model.perturb_param(f.model.flayer.neuron[f.model.param_name])
-
-    def evaluate(self, round: FaultRound, test_loader: DataLoader) -> None:
-        for b, (input, target, label) in enumerate(test_loader):
-            input = input.to(self.device)
-            target = target.to(self.device)
-
-            output = self.faulty_net.forward(input)
-
-            round.stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
-            round.stats.testing.numSamples += len(label)
-            round.stats.print(0, b)
-        round.stats.update()
-
-    def run(self, test_loader: DataLoader) -> None:
-        for r in self.rounds:
-            self.alter_synapses(r, 'perturb')
-            handles = self.register_hooks(r)
-
-            self.evaluate(r, test_loader)
-
-            self.alter_synapses(r, 'restore')
-            for h in handles:
-                h.remove()
-
-    def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layers: List[str] = None) -> None:
-        self.rounds = []
-        is_syn = fault_model.is_synaptic()
-        shapes = self.shapes_wei if is_syn else self.shapes_lay
-
-        for lay_name in layers or self.layer_names:
-            lay_shape = shapes[lay_name]
-
-            for k in range(lay_shape[0] if is_syn else 1):
-                for c in range(lay_shape[0+is_syn]):
-                    for h in range(lay_shape[1+is_syn]):
-                        for w in range(lay_shape[2+is_syn]):
-                            self.then_inject([Fault(fault_model, [FaultSite(lay_name, k if is_syn else None, (c, h, w))])])
-
-        self.run(test_loader)
-
-    def assume_shapes(self) -> None:
-        shape_hooks_handles = []
-        for lay_name, lay in self.injectables.items():
-            handle = lay.register_forward_hook(self.shape_hook_wrapper(lay_name))
-            shape_hooks_handles.append(handle)
-
-        dummy_input = torch.rand((1, *self.shape_in, 1)).to(self.device)
-        self.faulty_net.forward(dummy_input)
-
-        for h in shape_hooks_handles:
-            h.remove()
+        return valid_faults
 
     def define_random_faults(self, faults: List[Fault]) -> List[Fault]:
         for f in faults:
+            is_syn = f.model.is_synaptic()
+            shapes = self.shapes_wei if is_syn else self.shapes_lay
+
             for s in f.sites:
                 if s.is_random():
-                    s.layer = random.choice(self.layer_names)
+                    s.layer = random.choice(self.names_inj)
                     s.set_chw(None)
-
-                is_syn = f.model.is_synaptic()
-                shapes = self.shapes_wei if is_syn else self.shapes_lay
+                    if is_syn:
+                        s.dim0 = None
 
                 if s.dim0 is None:
                     s.dim0 = random.randrange(shapes[s.layer][0]) if is_syn else slice(None)
 
                 new_chw = []
-                for i, p in enumerate(s.get_chw()):
-                    new_chw.append(p if p is not None else random.randrange(shapes[s.layer][i+is_syn]))
+                for dim, val in enumerate(s.get_chw()):
+                    new_chw.append(val if val is not None else random.randrange(shapes[s.layer][dim+is_syn]))
                 s.set_chw(tuple(new_chw))
 
         return faults
 
-    def assert_injected_faults(self, faults: List[Fault]) -> List[Fault]:
-        valid_faults = []
-        for f in faults:
-            fc = copy.deepcopy(f)
-            v = True
+    def then_inject(self, faults: List[Fault]) -> List[Fault]:
+        self.rounds.append(FaultRound(self.names_inj))
 
-            for s in fc.sites:
-                v &= not s.layer or s.layer in self.injectables
+        return self.inject(faults, -1)
 
-                is_syn = fc.model.is_synaptic()
-                if is_syn:
-                    shapes = self.shapes_wei
-                    v &= not s.dim0 or (s.dim0 >= 0 and s.dim0 < shapes[s.layer][0])
-                else:
-                    shapes = self.shapes_lay
-                    # TODO: Check batch number (dim0)
+    def eject(self, faults: List[Fault] = None, round_idx: int = None) -> None:
+        # Eject from a specific round
+        if round_idx:
+            # Eject indicated faults from the round
+            if faults:
+                self.rounds[round_idx].remove(faults)
+            # Eject all faults from the round, i.e., remove the round itself
+            if not faults or not self.rounds[round_idx]:
+                self.rounds.pop(round_idx)
+        # Eject from all rounds
+        else:
+            # Eject indicated faults from any round the might exist
+            if faults:
+                for r in self.rounds:
+                    r.remove(faults)
+                    if not r:
+                        self.rounds.pop(r)
+            # Eject all faults from all rounds, i.e., all the rounds themselves
+            else:
+                self.rounds.clear()
 
-                chw = s.get_chw()
-                for i in range(3):
-                    v &= not chw[i] or (chw[i] >= 0 and chw[i] < shapes[s.layer][i+is_syn])
+        if not self.rounds:
+            self.rounds.append(FaultRound(self.names_inj))
 
-                if not v:
-                    fc.sites.remove(s)
+    # TODO: Store round index in self to avoid passing the round as a parameter? (probably not compatible with optimizations)
+    # FIXME: Cuda out of memory issues
+    def run(self, test_loader: DataLoader) -> None:
+        for r in self.rounds:
+            handles = self._register_hooks(r)
 
-            if bool(fc.sites):
-                valid_faults.append(fc)
+            self._perturb_synap(r)
+            self._perturb_param(r)
 
-        return valid_faults
+            self._evaluate(r, test_loader)
 
-    def infer_layer(self, out_size: torch.Size) -> torch.nn.Module:
-        shape = tuple(out_size[1:4])
-        try:
-            lay_idx = list(self.shapes_lay.values()).index(shape)
-            lay_name = list(self.shapes_lay.keys())[lay_idx]
-            return lay_name
-        except ValueError:
-            if shape == self.shape_in:
-                return 'input'
+            self._restore_param(r)
+            self._restore_synap(r)
 
-            return None
+            for h in handles:
+                h.remove()
 
-    def parametric_perturbation(self, round: FaultRound, spikes: torch.Tensor) -> None:
-        lay_name = self.infer_layer(spikes.shape)
-        if not lay_name or lay_name == self.layer_names[-1]:
-            return
+    def _register_hooks(self, round: FaultRound) -> List[RemovableHandle]:
+        handles = []
+        if not round.has_neuron_faults():
+            return []
 
-        lay_idx = 0 if lay_name == 'input' else self.layer_names.index(lay_name)
-        next_lay_name = self.layer_names[lay_idx]
+        # Neuron fault pre-hooks
+        # Neuron faults for last layer are evaluated directly on network's output (in _evaluate method)
+        for i, lay_name in enumerate(self.names_lay[:-1]):
+            if round.has_neuron_faults(lay_name):
+                # Register the pre-hook on the next layer of the faulty one
+                # to inject at its input, i.e., the output of the faulty layer
+                next_lay = self.layers[self.names_lay[i+1]]
+                h = next_lay.register_forward_pre_hook(self._neuron_pre_hook_wrapper(round, lay_name))
+                handles.append(h)
 
-        param_faults = round.get_parametric_faults(next_lay_name)
-        if not param_faults:
-            return
+        # Parametric fault pre-hooks
+        for lay_name, lay in self.injectables.items():
+            if round.has_parametric_faults(lay_name):
+                h = lay.register_forward_pre_hook(self._parametric_pre_hook_wrapper(round, lay_name))
+                handles.append(h)
 
-        next_lay = self.injectables[next_lay_name]
-        for f in param_faults:
-            f.model.perturb(f.model.flayer.spike(f.model.flayer.psp(next_lay(spikes)))[f.sites[0].unroll()])
+        return handles
 
-    def shape_hook_wrapper(self, layer_name: str):
-        def shape_hook(layer, args, output):
-            self.shapes_lay[layer_name] = tuple(output.size()[1:4])
-            self.shapes_wei[layer_name] = tuple(layer.weight.data.size()[0:4])
-        return shape_hook
+    def _perturb_synap(self, round: FaultRound) -> None:
+        for f in round.get_synapse_faults():
+            for s in f.sites:
+                # Perturb weights for synapse faults (no pre-hook needed)
+                lay = self.injectables[s.layer]
+                with torch.no_grad():
+                    lay.weight[s.unroll()] = f.model.perturb(lay.weight[s.unroll()], s.key())
 
-    def neuron_hook_wrapper(self, round: FaultRound):
-        def neuron_hook(_, __, spikes_out):
-            lay_name = self.infer_layer(spikes_out.shape)
-            if not lay_name:
-                return
+    def _restore_synap(self, round: FaultRound) -> None:
+        for f in round.get_synapse_faults():
+            for s in f.sites:
+                # Restore weights after the end of the round (no hook needed)
+                original = f.model.restore(s.key())
+                if original:
+                    self.injectables[s.layer].weight[s.unroll()] = original
 
-            neu_faults = round.get_neuron_faults(lay_name)
-            if not neu_faults:
-                return
+    def _perturb_param(self, round: FaultRound) -> None:
+        # Create a dummy layer for each parametric fault
+        for f in round.get_parametric_faults():
+            flayer = copy.deepcopy(self.slayer)
+            flayer.neuron[f.model.param_name] = f.model.perturb_param(flayer.neuron[f.model.param_name])
+            f.model.flayer = flayer
 
-            for f in neu_faults:
+    def _restore_param(self, round: FaultRound) -> None:
+        # Destroy dummy layers
+        for f in round.get_parametric_faults():
+            f.model.flayer = None
+
+    def _evaluate(self, round: FaultRound, test_loader: DataLoader) -> None:
+        is_out_faulty = round.has_neuron_faults(self.names_lay[-1])
+        out_neuron_callable = self._neuron_pre_hook_wrapper(round, self.names_lay[-1])
+
+        for b, (input, target, label) in enumerate(test_loader):
+            input = input.to(self.device)
+            target = target.to(self.device)
+
+            output = self.faulty_net.forward(input)
+            if is_out_faulty:
+                out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
+
+            round.stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
+            round.stats.testing.numSamples += len(label)
+            round.stats.print(0, b)  # TODO: Make output more indicative
+
+        round.stats.update()
+
+    def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layers: List[str] = None) -> None:
+        self.rounds.clear()
+
+        is_syn = fault_model.is_synaptic()
+        shapes = self.shapes_wei if is_syn else self.shapes_lay
+
+        lay_names_inj = [lay_name for lay_name in layers if lay_name in self.names_inj] if layers else self.names_inj
+
+        for lay_name in lay_names_inj:
+            lay_shape = shapes[lay_name]
+            for k in range(lay_shape[0] if is_syn else 1):
+                for c in range(lay_shape[0+is_syn]):
+                    for h in range(lay_shape[1+is_syn]):
+                        for w in range(lay_shape[2+is_syn]):
+                            self.then_inject(
+                                [Fault(fault_model, [FaultSite(lay_name, k if is_syn else None, (c, h, w))])])
+
+        self.run(test_loader)
+
+    def _neuron_pre_hook_wrapper(self, round: FaultRound, prev_layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...]], None]:
+        def neuron_pre_hook(_, args: Tuple[Any, ...]) -> None:
+            prev_spikes_out = args[0]
+            for f in round.get_neuron_faults(prev_layer_name):
                 for s in f.sites:
-                    spikes_out[s.unroll()] = f.model.perturbed or f.model.perturb(spikes_out[s.unroll()])
+                    prev_spikes_out[s.unroll()] = f.model.perturb(prev_spikes_out[s.unroll()])
 
-        return neuron_hook
+        return neuron_pre_hook
 
-    def parametric_hook_wrapper(self, round: FaultRound):
-        def parametric_hook(_, __, spikes_out):
-            self.parametric_perturbation(round, spikes_out)
+    def _parametric_pre_hook_wrapper(self, round: FaultRound, layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...]], None]:
+        def parametric_pre_hook(layer: nn.Module, args: Tuple[Any, ...]) -> None:
+            spikes_in = args[0]
 
-        return parametric_hook
+            # Temporarily clear layer's pre-hooks, so that they are not called recursively
+            pre_hooks = layer._forward_pre_hooks.copy()
+            layer._forward_pre_hooks.clear()
 
-    def parametric_pre_hook_wrapper(self, round: FaultRound):
-        def parametric_pre_hook(_, input):
-            # TODO: Check if input is list of args
-            self.parametric_perturbation(round, input)
+            for f in round.get_parametric_faults(layer_name):
+                flayer = f.model.flayer
+                fspike_out = flayer.spike(flayer.psp(layer(spikes_in)))
+                f.model.args = (fspike_out[f.sites[0].unroll()],)
+
+            layer._forward_pre_hooks.update(pre_hooks)
 
         return parametric_pre_hook
