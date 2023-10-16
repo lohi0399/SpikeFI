@@ -149,7 +149,6 @@ class Campaign:
             self.rounds.append(FaultRound(self.names_inj))
 
     # TODO: Store round index in self to avoid passing the round as a parameter? (probably not compatible with optimizations)
-    # FIXME: Cuda out of memory issues
     def run(self, test_loader: DataLoader) -> None:
         for r in self.rounds:
             handles = self._register_hooks(r)
@@ -224,10 +223,12 @@ class Campaign:
             input = input.to(self.device)
             target = target.to(self.device)
 
-            output = self.faulty_net.forward(input)
+            with torch.no_grad():
+                output = self.faulty_net.forward(input)
             if is_out_faulty:
                 out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
 
+            # TODO: Store loss statistics, too
             round.stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
             round.stats.testing.numSamples += len(label)
             round.stats.print(0, b)  # TODO: Make output more indicative
