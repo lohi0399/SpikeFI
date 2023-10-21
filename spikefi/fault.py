@@ -238,17 +238,19 @@ class BitflippedSynapse(FaultModel):
 
 
 class Fault:
-    def __init__(self, model: FaultModel, sites: FaultSite | Iterable[FaultSite] = [], random_sites_num: int = 0) -> None:
+    def __init__(self, model: FaultModel, sites: Iterable[FaultSite] = [], random_sites_num: int = 0) -> None:
         self.model = model
+
+        if not isinstance(sites, Iterable):
+            raise TypeError(f"'{type(sites).__name__}' object for sites argument is not iterable")
 
         if not sites and not random_sites_num:
             self.sites_defined = set()
-            self.sites_pending = [FaultSite()]
+            self.sites_pending = []
             return
 
-        sites_ = [] if not sites else [sites] if isinstance(sites, FaultSite) else sites
-        self.sites_defined = {s for s in sites_ if s.is_defined()}
-        self.sites_pending = [s for s in sites_ if not s.is_defined()]
+        self.sites_defined = {s for s in sites if s.is_defined()}
+        self.sites_pending = [s for s in sites if not s.is_defined()]
         if random_sites_num:
             self.sites_pending.extend([FaultSite() for _ in range(random_sites_num)])
 
@@ -308,6 +310,9 @@ class Fault:
         return len(self) > 1
 
     def update_sites(self, sites: Iterable[FaultSite]) -> None:
+        if not isinstance(sites, Iterable):
+            raise TypeError(f"'{type(sites).__name__}' object is not iterable")
+
         if not sites:
             return
 
@@ -411,10 +416,11 @@ class FaultRound:
     def has_synapse_faults(self, layer_name: str = None) -> bool:
         return self.has_faults(layer_name, FaultTarget.WEIGHT)
 
-    def insert(self, faults: Fault | Iterable[Fault]) -> None:
-        faults_ = [] if not faults else [faults] if isinstance(faults, Fault) else faults
+    def insert(self, faults: Iterable[Fault]) -> None:
+        if not isinstance(faults, Iterable):
+            raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
-        for f in faults_:
+        for f in faults:
             # TODO: Check here if FaultModel is already in the round
             # If not, create an empty Fault with this FaultModel
             # and use it directly in the sites loop (without try-catch)
@@ -426,21 +432,22 @@ class FaultRound:
                 # since fault model depends on the neuron's output
                 if f.model.is_parametric():
                     f.model.args = tuple()
-                    self.round[s.layer].add(Fault(deepcopy(f.model), s))
+                    self.round[s.layer].add(Fault(deepcopy(f.model), [s]))
                     continue
 
                 try:
                     lay_fault = next(lay_fault for lay_fault in self.round[s.layer] if lay_fault.model == f.model)
                     lay_fault.add_site(s)
                 except StopIteration:
-                    self.round[s.layer].add(Fault(f.model, s))
+                    self.round[s.layer].add(Fault(f.model, [s]))
 
         self._create_fault_map()
 
-    def remove(self, faults: Fault | Iterable[Fault]) -> None:
-        faults_ = [] if not faults else [faults] if isinstance(faults, Fault) else faults
+    def remove(self, faults: Iterable[Fault]) -> None:
+        if not isinstance(faults, Iterable):
+            raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
-        for f in faults_:
+        for f in faults:
             if not f:
                 continue
             for lay_name, lay_fset in self.round.items():

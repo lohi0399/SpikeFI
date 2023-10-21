@@ -78,6 +78,9 @@ class Campaign:
 
     # Asserts only the defined sites
     def _assert_faults(self, faults: Iterable[Fault]) -> Iterable[Fault]:
+        if not isinstance(faults, Iterable):
+            raise TypeError(f"'{type(faults).__name__}' object is not iterable")
+
         valid_faults = []
         for f in faults:
             is_syn = f.model.is_synaptic()
@@ -107,6 +110,9 @@ class Campaign:
         return valid_faults
 
     def define_faults(self, faults: Iterable[Fault]) -> Iterable[Fault]:
+        if not isinstance(faults, Iterable):
+            raise TypeError(f"'{type(faults).__name__}' object is not iterable")
+
         for f in faults:
             is_syn = f.model.is_synaptic()
             shapes = self.shapes_wei if is_syn else self.shapes_lay
@@ -135,6 +141,9 @@ class Campaign:
         return self.inject(faults, -1)
 
     def eject(self, faults: Iterable[Fault] = None, round_idx: int = None) -> None:
+        if faults is not None and not isinstance(faults, Iterable):
+            raise TypeError(f"'{type(faults).__name__}' object is not iterable")
+
         # Eject from a specific round
         if round_idx:
             # Eject indicated faults from the round
@@ -243,13 +252,16 @@ class Campaign:
 
         round.stats.update()
 
-    def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layers: Iterable[str] = None) -> None:
+    def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layer_names: Iterable[str] = None) -> None:
+        if not isinstance(layer_names, Iterable):
+            raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable")
+
         self.rounds.clear()
 
         is_syn = fault_model.is_synaptic()
         shapes = self.shapes_wei if is_syn else self.shapes_lay
 
-        lay_names_inj = [lay_name for lay_name in layers if lay_name in self.names_inj] if layers else self.names_inj
+        lay_names_inj = [lay_name for lay_name in layer_names if lay_name in self.names_inj] if layer_names else self.names_inj
 
         for lay_name in lay_names_inj:
             lay_shape = shapes[lay_name]
@@ -258,7 +270,7 @@ class Campaign:
                     for m in range(lay_shape[1 + is_syn]):
                         for n in range(lay_shape[2 + is_syn]):
                             self.then_inject(
-                                [Fault(fault_model, FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
+                                [Fault(fault_model, [FaultSite(lay_name, (k if is_syn else slice(None), l, m, n))])])
 
         self.run(test_loader)
 
