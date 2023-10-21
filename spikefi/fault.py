@@ -19,46 +19,38 @@ from .utils.quantization import q2i_dtype, quant_args_from_range
 
 
 class FaultSite:
-    def __init__(self, layer_name: str = None, dim0: int | slice = None, chw: Tuple[int, int, int] = None) -> None:
+    def __init__(self, layer_name: str = None, position: Tuple[int | slice, int, int, int] = (None,) * 4) -> None:
+        # pos0 is integer for synaptic faults and either integer or slice for neuron faults
         self.layer = layer_name
-        self.dim0 = dim0
-        self.set_chw(chw)
+
+        if position is not None:
+            assert len(position) == 4
+        self.position = position or (None,) * 4
+
+    def __bool__(self) -> bool:
+        return self is not None and self.is_defined()
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, FaultSite):
-            return False
-
-        return self._key() == other._key()
+        return isinstance(other, FaultSite) and self._key() == other._key()
 
     def __hash__(self) -> int:
         return hash(self._key())
 
     def __repr__(self) -> str:
-        return f"Fault Site: layer {self.layer or '*'} \
-                 at ({', '.join(list(map(FaultSite.pos2str, self.unroll()[0:4])))})"
+        return f"Fault Site: layer {self.layer or '*'} " + \
+            f"at ({', '.join(list(map(FaultSite.pos2str, self.position)))})"
 
     def _key(self) -> Tuple:
-        dim0_key = (self.dim0.start, self.dim0.stop, self.dim0.step) if isinstance(self.dim0, slice) else self.dim0
-        return self.layer, dim0_key, self.get_chw()
+        pos0 = self.position[0]
+        pos0_key = (pos0.start, pos0.stop, pos0.step) if isinstance(pos0, slice) else pos0
 
-    def get_chw(self) -> Tuple[int, int, int]:
-        return self.channel, self.height, self.width
+        return self.layer, pos0_key, self.position[1:]
 
     def is_defined(self) -> bool:
-        return not self.is_random() and self.dim0 is not None and all(dim is not None for dim in self.get_chw())
-
-    def is_random(self) -> bool:
-        return not self.layer
-
-    def set_chw(self, chw: Tuple[int, int, int]) -> None:
-        if chw:
-            assert len(chw) == 3
-
-        self.channel, self.height, self.width = [chw[i] for i in range(3)] if chw else 3 * [None]
+        return bool(self.layer) and all(pos is not None for pos in self.position)
 
     def unroll(self) -> Tuple[int | slice, int, int, int, slice]:
-        # dim0 is integer for synaptic faults and either integer or slice for neuron faults
-        return self.dim0, self.channel, self.height, self.width, slice(None)
+        return self.position + (slice(None),)
 
     @staticmethod
     def pos2str(x: int) -> str:
@@ -121,13 +113,13 @@ class FaultModel:
         return self.target is FaultTarget.WEIGHT
 
     def is_perturbed(self, site: FaultSite) -> bool:
-        return not site and site in self.original and site in self.perturbed
+        return site is not None and site in self.original and site in self.perturbed
 
     # Omitting the site means no restoration will be needed
     def perturb(self, original: float | Tensor, site: FaultSite = None) -> float | Tensor:
         perturbed = self.method(original, *self.args)
 
-        if site:
+        if site is not None:
             self.original[site] = original
             self.perturbed[site] = perturbed
 

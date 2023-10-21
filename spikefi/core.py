@@ -90,11 +90,13 @@ class Campaign:
                 v = s.layer in self.injectables
                 if v:
                     if is_syn:
-                        v &= -shapes[s.layer][0] <= s.dim0 < shapes[s.layer][0]
+                        v &= -shapes[s.layer][0] <= s.position[0] < shapes[s.layer][0]
 
-                    chw = s.get_chw()
-                    for i in range(3):
-                        v &= chw[i] <= chw[i] < shapes[s.layer][i + is_syn]
+                    for i in range(1, 4):
+                        # shapes_lay index values, si: 0-2
+                        # shapes_wei index values, si: 1-3
+                        si = i - (not is_syn)
+                        v &= -shapes[s.layer][si] <= s.position[i] < shapes[s.layer][si]
 
                 if not v:
                     f.sites_defined.remove(s)
@@ -110,19 +112,19 @@ class Campaign:
             shapes = self.shapes_wei if is_syn else self.shapes_lay
 
             for s in f.sites_pending:
-                if s.is_random():
+                if not s.layer:
                     s.layer = random.choice(self.names_inj)
-                    s.set_chw(None)
-                    if is_syn:
-                        s.dim0 = None
 
-                if s.dim0 is None:
-                    s.dim0 = random.randrange(shapes[s.layer][0]) if is_syn else slice(None)
+                pos = list(s.position)
+                if pos[0] is None:
+                    pos[0] = random.randrange(shapes[s.layer][0]) if is_syn else slice(None)
 
-                new_chw = []
-                for dim, val in enumerate(s.get_chw()):
-                    new_chw.append(val if val is not None else random.randrange(shapes[s.layer][dim + is_syn]))
-                s.set_chw(tuple(new_chw))
+                for i in range(1, 4):
+                    if pos[i] is None:
+                        si = i - (not is_syn)
+                        pos[i] = random.randrange(shapes[s.layer][si])
+
+                s.position = tuple(pos)
 
             f.refresh()
 
@@ -252,11 +254,11 @@ class Campaign:
         for lay_name in lay_names_inj:
             lay_shape = shapes[lay_name]
             for k in range(lay_shape[0] if is_syn else 1):
-                for c in range(lay_shape[0 + is_syn]):
-                    for h in range(lay_shape[1 + is_syn]):
-                        for w in range(lay_shape[2 + is_syn]):
+                for l in range(lay_shape[0 + is_syn]):
+                    for m in range(lay_shape[1 + is_syn]):
+                        for n in range(lay_shape[2 + is_syn]):
                             self.then_inject(
-                                [Fault(fault_model, FaultSite(lay_name, k if is_syn else slice(None), (c, h, w)))])
+                                [Fault(fault_model, FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
 
         self.run(test_loader)
 
