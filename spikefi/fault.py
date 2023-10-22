@@ -24,7 +24,7 @@ class FaultSite:
         self.layer = layer_name
 
         if position is not None:
-            assert len(position) == 4
+            assert len(position) == 4, 'Position tuple must have a length of 4'
         self.position = position or (None,) * 4
 
     def __bool__(self) -> bool:
@@ -37,8 +37,8 @@ class FaultSite:
         return hash(self._key())
 
     def __repr__(self) -> str:
-        return f"Fault Site: layer {self.layer or '*'} " + \
-            f"at ({', '.join(list(map(FaultSite.pos2str, self.position)))})"
+        return "Fault Site @ layer '" + (self.layer or '*') + "' " \
+            + "(" + ", ".join(list(map(FaultSite.pos2str, self.position))) + ")"
 
     def _key(self) -> Tuple:
         pos0 = self.position[0]
@@ -69,7 +69,7 @@ class FaultTarget(Flag):
 
 class FaultModel:
     def __init__(self, target: FaultTarget, method: Callable[..., float | Tensor], *args) -> None:
-        assert len(target) == 1
+        assert len(target) == 1, 'Fault Model must have exactly 1 Fault Target'
         self.target = target
         self.method = method
         self.args = args
@@ -78,23 +78,19 @@ class FaultModel:
         self.perturbed = {}
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, FaultModel):
-            return False
-
-        return self._key() == other._key()
+        return isinstance(other, FaultModel) and self._key() == other._key()
 
     def __hash__(self) -> int:
         return hash(self._key())
 
     def __repr__(self) -> str:
-        s = f"Fault Model: '{self.get_name()}'\n\
-              - Target: {self.target}\n\
-              - Method: {self.method.__name__}\n\
-              - Arguments:"
-        for i, arg in enumerate(self.args):
-            s += f"\n    ~ Arg {i+1}: {arg}"
+        return f"Fault Model: '{self.get_name()}'\n" \
+            + f"  - Target: {self.target}\n" \
+            + f"  - Method: {self.method.__name__}\n" \
+            + f"  - Arguments: {self.args}"
 
-        return s
+    def __str__(self) -> str:
+        return f"Fault Model '{self.get_name()}': {self.target}, {self.method.__name__}"
 
     def _key(self) -> Tuple:
         return self.target, self.method, self.args
@@ -153,7 +149,7 @@ class FaultModel:
     def bfl_value(original: float | Tensor, bit: int,
                   scale: float | Tensor, zero_point: int | Tensor, dtype: torch.dtype) -> Tensor:
         idt_info = torch.iinfo(q2i_dtype(dtype))
-        assert bit >= 0 and bit < idt_info.bits
+        assert bit >= 0 and bit < idt_info.bits, 'Invalid bit position to flip'
 
         q = torch.quantize_per_tensor(original, scale, zero_point, dtype)
         return torch.dequantize(q ^ 2 ** bit)
@@ -172,14 +168,13 @@ class ParametricFaultModel(FaultModel):
         self.flayer = None
 
     def __repr__(self) -> str:
-        s = super().__repr__() + f"\n\
-              - Parameter Name: '{self.param_name}'\n\
-              - Parameter Method: {self.param_method}\n\
-              - Parameter Arguments:"
-        for i, arg in enumerate(self.param_args):
-            s += f"\n    ~ Arg {i+1}: {arg}"
+        return super().__repr__() + "\n" \
+            + f"  - Parameter Name: '{self.param_name}'\n" \
+            + f"  - Parameter Method: {self.param_method.__name__}\n" \
+            + f"  - Parameter Arguments: {self.param_args}"
 
-        return s
+    def __str__(self) -> str:
+        return super().__str__() + f" | Parametric: '{self.param_name}', {self.param_method.__name__}"
 
     def _key(self) -> Tuple:
         return super()._key() + (self.param_name, self.param_method, self.param_args)
@@ -255,7 +250,7 @@ class Fault:
             self.sites_pending.extend([FaultSite() for _ in range(random_sites_num)])
 
     def __add__(self, other: 'Fault') -> FaultSite():
-        assert self.model == other.model
+        assert self.model == other.model, 'Only two Faults with the same Fault Model can be added'
 
         all_sites_defined = set(self.sites_defined)
         all_sites_defined.update(other.sites_defined)
@@ -286,7 +281,17 @@ class Fault:
         return next(self.sites_defined)
 
     def __repr__(self) -> str:
-        return f"Fault: '{self.model.get_name()}' @ {len(self)} site{'s' if self.is_multiple() else ''}"
+        return f"Fault '{self.model.get_name()}' @ {self.sites_defined or '0 sites'}"
+
+    def __str__(self) -> str:
+        s = f"Fault '{self.model.get_name()}' @ "
+        if len(self) == 1:
+            f = next(iter(self.sites_defined))
+            s += str(f).split('@ ')[-1]
+        else:
+            s += f"{len(self)} sites"
+
+        return s
 
     def _key(self) -> Tuple:
         return self.model, frozenset(self.sites_defined)
@@ -364,7 +369,14 @@ class FaultRound:
     def __repr__(self) -> str:
         s = 'Fault Round: {'
         for lay_name, fault_set in self.round.items():
-            s += f"\n  @ {lay_name}: {fault_set}"
+            s += f"\n  '{lay_name}': {fault_set}"
+
+        return s + '\n}'
+
+    def __str__(self) -> str:
+        s = 'Fault Round: {'
+        for lay_name, fault_set in self.round.items():
+            s += f"\n  '{lay_name}': {', '.join(map(str, fault_set))}"
 
         return s + '\n}'
 

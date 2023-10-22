@@ -12,8 +12,8 @@ def q2i_dtype(qdtype: torch.dtype) -> torch.dtype:
     elif qdtype is torch.qint32:
         idtype = torch.int32
     else:
-        raise AssertionError("The desired data type of returned tensor has to be \
-                             one of the quantized dtypes: torch.quint8, torch.qint8, torch.qint32")
+        raise AssertionError('The desired data type of returned tensor has to be'
+                             'one of the quantized dtypes: torch.quint8, torch.qint8, torch.qint32')
 
     return idtype
 

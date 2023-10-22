@@ -14,6 +14,7 @@ from .fault import Fault, FaultModel, FaultRound, FaultSite
 
 
 # TODO: Fix long lines
+# TODO: Logging (print status messages) from each method
 
 
 class Campaign:
@@ -35,8 +36,22 @@ class Campaign:
         self.rounds = [FaultRound()]
 
     def __repr__(self) -> str:
-        # TODO: Return info on layers and rounds
-        pass
+        s = 'FI Campaign:\n'
+        s += f"  - Network: '{self.faulty_net.__class__.__name__}':\n"
+
+        s += f"  - Layers ({len(self.layers)}): {{\n"
+        for lay_idx, lay_name in enumerate(self.names_lay):
+            s += f"      #{lay_idx}: '{lay_name}' ({'' if lay_name in self.names_inj else 'non '}injectable)\n"
+            s += f"        Shapes: neurons {self.shapes_lay[lay_name]} | synapses {self.shapes_wei[lay_name]}\n"
+        s += '  }\n'
+
+        s += f"  - Rounds ({len(self.rounds)}): {{\n"
+        for round_idx, round in enumerate(self.rounds):
+            round_str = str(round).replace('\n', '\n      ')
+            s += f"      #{round_idx}: {round_str}\n"
+        s += '  }'
+
+        return s
 
     # TODO: Test when containing dropout layers, too
     def _assume_layer_info(self, shape_in: Tuple[int, int, int]) -> None:
@@ -66,7 +81,7 @@ class Campaign:
         return layer_info_hook
 
     def inject(self, faults: Iterable[Fault], round_idx: int = -1) -> Iterable[Fault]:
-        assert -len(self.rounds) <= round_idx < len(self.rounds)
+        assert -len(self.rounds) <= round_idx < len(self.rounds), f'Invalid round index {round_idx}'
 
         inj_faults = deepcopy(faults)
         self._assert_faults(inj_faults)
@@ -89,6 +104,7 @@ class Campaign:
             if f.model.is_parametric() and f.model.param_name not in self.slayer.neuron:
                 continue
 
+            to_remove = set()
             for s in f:
                 v = s.layer in self.injectables
                 if v:
@@ -102,8 +118,9 @@ class Campaign:
                         v &= -shapes[s.layer][si] <= s.position[i] < shapes[s.layer][si]
 
                 if not v:
-                    f.sites_defined.remove(s)
+                    to_remove.add(s)
 
+            f.sites_defined.difference_update(to_remove)
             if f:
                 valid_faults.append(f)
 
