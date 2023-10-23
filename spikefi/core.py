@@ -105,7 +105,7 @@ class Campaign:
                 continue
 
             to_remove = set()
-            for s in f:
+            for s in f.sites:
                 v = s.layer in self.injectables
                 if v:
                     if is_syn:
@@ -120,7 +120,7 @@ class Campaign:
                 if not v:
                     to_remove.add(s)
 
-            f.sites_defined.difference_update(to_remove)
+            f.sites.difference_update(to_remove)
             if f:
                 valid_faults.append(f)
 
@@ -225,7 +225,7 @@ class Campaign:
 
     def _perturb_synap(self, round: FaultRound) -> None:
         for f in round.get_synapse_faults():
-            for s in f:
+            for s in f.sites:
                 # Perturb weights for synapse faults (no pre-hook needed)
                 lay = self.injectables[s.layer]
                 with torch.no_grad():
@@ -233,7 +233,7 @@ class Campaign:
 
     def _restore_synap(self, round: FaultRound) -> None:
         for f in round.get_synapse_faults():
-            for s in f:
+            for s in f.sites:
                 # Restore weights after the end of the round (no hook needed)
                 original = f.model.restore(s)
                 if original:
@@ -287,7 +287,7 @@ class Campaign:
                     for m in range(lay_shape[1 + is_syn]):
                         for n in range(lay_shape[2 + is_syn]):
                             self.then_inject(
-                                [Fault(fault_model, [FaultSite(lay_name, (k if is_syn else slice(None), l, m, n))])])
+                                [Fault(fault_model, FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
 
         self.run(test_loader)
 
@@ -295,7 +295,7 @@ class Campaign:
         def neuron_pre_hook(_, args: Tuple[Any, ...]) -> None:
             prev_spikes_out = args[0]
             for f in round.get_neuron_faults(prev_layer_name):
-                for s in f:
+                for s in f.sites:
                     prev_spikes_out[s.unroll()] = f.model.perturb(prev_spikes_out[s.unroll()])
 
         return neuron_pre_hook

@@ -233,80 +233,72 @@ class BitflippedSynapse(FaultModel):
 
 
 class Fault:
-    def __init__(self, model: FaultModel, sites: Iterable[FaultSite] = [], random_sites_num: int = 0) -> None:
+    def __init__(self, model: FaultModel, sites: FaultSite | Iterable[FaultSite] = None, random_sites_num: int = 0) -> None:
         self.model = model
-
-        if not isinstance(sites, Iterable):
-            raise TypeError(f"'{type(sites).__name__}' object for sites argument is not iterable")
+        self.sites = set()
+        self.sites_pending = []
 
         if not sites and not random_sites_num:
-            self.sites_defined = set()
-            self.sites_pending = []
             return
 
-        self.sites_defined = {s for s in sites if s.is_defined()}
-        self.sites_pending = [s for s in sites if not s.is_defined()]
+        if isinstance(sites, Iterable):
+            self.update_sites(sites)
+        else:
+            self.add_site(sites)
+
         if random_sites_num:
             self.sites_pending.extend([FaultSite() for _ in range(random_sites_num)])
 
     def __add__(self, other: 'Fault') -> FaultSite():
         assert self.model == other.model, 'Only two Faults with the same Fault Model can be added'
-
-        all_sites_defined = set(self.sites_defined)
-        all_sites_defined.update(other.sites_defined)
-        all_sites = list(all_sites_defined) + self.sites_pending + other.sites_pending
-
-        return Fault(deepcopy(self.model), all_sites)
+        return Fault(deepcopy(self.model), self.get_sites(include_pending=True) + other.get_sites(include_pending=True))
 
     def __bool__(self) -> bool:
-        return self is not None and bool(self.sites_defined)
+        return self is not None and bool(self.sites)
 
     def __contains__(self, site: FaultSite) -> bool:
-        return site in self.sites_defined
+        return site in self.sites
 
     def __eq__(self, other: object) -> bool:
-        # and collections.Counter(self.sites_pending) == collections.Counter(other.sites_pending)
-        return isinstance(other, Fault) and self._key() == other._key()
-
-    def __hash__(self) -> int:
-        return hash(self._key())
+        # Equality is checked so as the Faults were injected "as is",
+        # therefore it does not take into account the pending Fault Sites,
+        # as they are considered random sites and are not yet defined (finalized)
+        return isinstance(other, Fault) and self.sites == other.sites
 
     def __len__(self) -> int:
-        return len(self.sites_defined)
-
-    def __iter__(self):
-        return iter(self.sites_defined)
-
-    def __next__(self):
-        return next(self.sites_defined)
+        return len(self.sites)
 
     def __repr__(self) -> str:
-        return f"Fault '{self.model.get_name()}' @ {self.sites_defined or '0 sites'}"
+        s = f"Fault '{self.model.get_name()}' @ {self.sites or '0 sites'}"
+        if self.sites_pending:
+            s += f" (+{len(self.sites_pending)} pending)"
+
+        return s
 
     def __str__(self) -> str:
         s = f"Fault '{self.model.get_name()}' @ "
         if len(self) == 1:
-            f = next(iter(self.sites_defined))
+            f = next(iter(self.sites))
             s += str(f).split('@ ')[-1]
         else:
             s += f"{len(self)} sites"
 
-        return s
+        if self.sites_pending:
+            s += f" (+{len(self.sites_pending)} pending)"
 
-    def _key(self) -> Tuple:
-        return self.model, frozenset(self.sites_defined)
+        return s
 
     def add_site(self, site: FaultSite) -> None:
         if site is None:
             return
 
         if site.is_defined():
-            self.sites_defined.add(site)
+            self.sites.add(site)
         else:
             self.sites_pending.append(site)
 
-    def get_sites(self) -> List[FaultSite]:
-        return list(self.sites_defined) + self.sites_pending
+    def get_sites(self, include_pending: bool = False) -> List[FaultSite]:
+        return list(self.sites) + (self.sites_pending if include_pending else [])
 
     def is_complete(self) -> bool:
         return not self.sites_pending
@@ -314,28 +306,27 @@ class Fault:
     def is_multiple(self) -> bool:
         return len(self) > 1
 
-    def update_sites(self, sites: Iterable[FaultSite]) -> None:
-        if not isinstance(sites, Iterable):
-            raise TypeError(f"'{type(sites).__name__}' object is not iterable")
-
-        if not sites:
-            return
-
-        self.sites_defined.update({s for s in sites if s.is_defined()})
-        self.sites_pending.extend([s for s in sites if not s.is_defined()])
-
     def refresh(self, discard_duplicates: bool = False) -> None:
-        to_remove = []
+        newly_defined = []
         for s in self.sites_pending:
             if not s.is_defined():
                 continue
 
-            if self.sites_defined.isdisjoint({s}) or discard_duplicates:
-                to_remove.append(s)
-            self.sites_defined.add(s)
+            if self.sites.isdisjoint({s}) or discard_duplicates:
+                newly_defined.append(s)
+            self.sites.add(s)
 
-        for s in to_remove:
+        for s in newly_defined:
             self.sites_pending.remove(s)
+
+    def update_sites(self, sites: Iterable[FaultSite]) -> None:
+        if sites is None:
+            return
+        if not isinstance(sites, Iterable):
+            raise TypeError(f"'{type(sites).__name__}' object is not iterable")
+
+        for s in sites:
+            self.add_site(s)
 
 
 class FaultRound:
@@ -386,7 +377,7 @@ class FaultRound:
 
         for lay_fset in self.round.values():
             for f in lay_fset:
-                for s in f:
+                for s in f.sites:
                     self.fault_map[s.layer][FaultTarget.Z] |= f.model.is_neuronal()
                     self.fault_map[s.layer][FaultTarget.P] |= f.model.is_parametric()
                     self.fault_map[s.layer][FaultTarget.W] |= f.model.is_synaptic()
@@ -436,22 +427,22 @@ class FaultRound:
             # TODO: Check here if FaultModel is already in the round
             # If not, create an empty Fault with this FaultModel
             # and use it directly in the sites loop (without try-catch)
-            for s in f:
+            for s in f.sites:
                 if s.layer not in self.round:
-                    self.round[s.layer] = set()
+                    self.round[s.layer] = []
 
                 # Make sure that each parametric fault has a single site,
                 # since fault model depends on the neuron's output
                 if f.model.is_parametric():
                     f.model.args = tuple()
-                    self.round[s.layer].add(Fault(deepcopy(f.model), [s]))
+                    self.round[s.layer].append(Fault(deepcopy(f.model), s))
                     continue
 
                 try:
                     lay_fault = next(lay_fault for lay_fault in self.round[s.layer] if lay_fault.model == f.model)
                     lay_fault.add_site(s)
                 except StopIteration:
-                    self.round[s.layer].add(Fault(f.model, [s]))
+                    self.round[s.layer].append(Fault(f.model, s))
 
         self._create_fault_map()
 
@@ -463,7 +454,7 @@ class FaultRound:
             if not f:
                 continue
             for lay_name, lay_fset in self.round.items():
-                sites_to_remove = [s for s in f if s.layer == lay_name]
+                sites_to_remove = [s for s in f.sites if s.layer == lay_name]
                 if not sites_to_remove:
                     continue
 
@@ -471,11 +462,11 @@ class FaultRound:
                     lay_fault = next(lay_fault for lay_fault in lay_fset if lay_fault.model == f.model)
                     for s in sites_to_remove:
                         if s in lay_fault:
-                            lay_fault.sites_defined.discard(s)
+                            lay_fault.sites.discard(s)
 
                     # FIXME: Fault is no longer indexed by set because it and its hash are changed
                     if not lay_fault:
-                        lay_fset.discard(lay_fault)
+                        lay_fset.remove(lay_fault)
                 except StopIteration:
                     continue
 
