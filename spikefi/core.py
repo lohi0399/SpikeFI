@@ -34,6 +34,7 @@ class Campaign:
         self._assume_layer_info(shape_in)
 
         self.rounds = [FaultRound()]
+        self.stats = []
 
     def __repr__(self) -> str:
         s = 'FI Campaign:\n'
@@ -87,7 +88,7 @@ class Campaign:
         self._assert_faults(inj_faults)
         self.define_faults(inj_faults)
 
-        self.rounds[round_idx].insert(inj_faults)
+        self.rounds[round_idx].insert_many(inj_faults)
 
         return inj_faults
 
@@ -165,7 +166,7 @@ class Campaign:
         if round_idx:
             # Eject indicated faults from the round
             if faults:
-                self.rounds[round_idx].remove(faults)
+                self.rounds[round_idx].extract_many(faults)
             # Eject all faults from the round, i.e., remove the round itself
             if not faults or not self.rounds[round_idx]:
                 self.rounds.pop(round_idx)
@@ -174,7 +175,7 @@ class Campaign:
             # Eject indicated faults from any round the might exist
             if faults:
                 for r in self.rounds:
-                    r.remove(faults)
+                    r.extract_many(faults)
                     if not r:
                         self.rounds.pop(r)
             # Eject all faults from all rounds, i.e., all the rounds themselves
@@ -186,29 +187,32 @@ class Campaign:
 
     # TODO: Store round index in self to avoid passing the round as a parameter? (probably not compatible with optimizations)
     def run(self, test_loader: DataLoader) -> None:
-        for r in self.rounds:
-            handles = self._register_hooks(r)
+        for round in self.rounds:
+            stats = snn.utils.stats()
+            self.stats.append(stats)
 
-            self._perturb_synap(r)
-            self._perturb_param(r)
+            handles = self._register_hooks(round)
 
-            self._evaluate(r, test_loader)
+            self._perturb_synap(round)
+            self._perturb_param(round)
 
-            self._restore_param(r)
-            self._restore_synap(r)
+            self._evaluate(round, stats, test_loader)
+
+            self._restore_param(round)
+            self._restore_synap(round)
 
             for h in handles:
                 h.remove()
 
     def _register_hooks(self, round: FaultRound) -> List[RemovableHandle]:
         handles = []
-        if not round.has_neuron_faults():
+        if not round.search_neuronal():
             return []
 
         # Neuron fault pre-hooks
         # Neuron faults for last layer are evaluated directly on network's output (in _evaluate method)
         for i, lay_name in enumerate(self.names_lay[:-1]):
-            if round.has_neuron_faults(lay_name):
+            if round.search_neuronal(lay_name):
                 # Register the pre-hook on the next layer of the faulty one
                 # to inject at its input, i.e., the output of the faulty layer
                 next_lay = self.layers[self.names_lay[i + 1]]
@@ -217,14 +221,14 @@ class Campaign:
 
         # Parametric fault pre-hooks
         for lay_name, lay in self.injectables.items():
-            if round.has_parametric_faults(lay_name):
+            if round.search_parametric(lay_name):
                 h = lay.register_forward_pre_hook(self._parametric_pre_hook_wrapper(round, lay_name))
                 handles.append(h)
 
         return handles
 
     def _perturb_synap(self, round: FaultRound) -> None:
-        for f in round.get_synapse_faults():
+        for f in round.search_synaptic():
             for s in f.sites:
                 # Perturb weights for synapse faults (no pre-hook needed)
                 lay = self.injectables[s.layer]
@@ -232,7 +236,7 @@ class Campaign:
                     lay.weight[s.unroll()] = f.model.perturb(lay.weight[s.unroll()], s)
 
     def _restore_synap(self, round: FaultRound) -> None:
-        for f in round.get_synapse_faults():
+        for f in round.search_synaptic():
             for s in f.sites:
                 # Restore weights after the end of the round (no hook needed)
                 original = f.model.restore(s)
@@ -241,16 +245,16 @@ class Campaign:
 
     def _perturb_param(self, round: FaultRound) -> None:
         # Create a dummy layer for each parametric fault
-        for f in round.get_parametric_faults():
+        for f in round.search_parametric():
             f.model.param_perturb(self.slayer)
 
     def _restore_param(self, round: FaultRound) -> None:
         # Destroy dummy layers
-        for f in round.get_parametric_faults():
+        for f in round.search_parametric():
             f.model.param_restore()
 
-    def _evaluate(self, round: FaultRound, test_loader: DataLoader) -> None:
-        is_out_faulty = round.has_neuron_faults(self.names_lay[-1])
+    def _evaluate(self, round: FaultRound, stats: snn.utils.stats, test_loader: DataLoader) -> None:
+        is_out_faulty = bool(round.search_neuronal(self.names_lay[-1]))
         out_neuron_callable = self._neuron_pre_hook_wrapper(round, self.names_lay[-1])
 
         for b, (input, target, label) in enumerate(test_loader):
@@ -263,15 +267,15 @@ class Campaign:
                 out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
 
             # TODO: Store loss statistics, too
-            round.stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
-            round.stats.testing.numSamples += len(label)
-            round.stats.print(0, b)  # TODO: Make output more indicative
+            stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
+            stats.testing.numSamples += len(label)
+            stats.print(0, b)  # TODO: Make output more indicative
 
-        round.stats.update()
+        stats.update()
 
     def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layer_names: Iterable[str] = None) -> None:
-        if not isinstance(layer_names, Iterable):
-            raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable")
+        if not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
+            raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
 
         self.rounds.clear()
 
@@ -294,9 +298,10 @@ class Campaign:
     def _neuron_pre_hook_wrapper(self, round: FaultRound, prev_layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...]], None]:
         def neuron_pre_hook(_, args: Tuple[Any, ...]) -> None:
             prev_spikes_out = args[0]
-            for f in round.get_neuron_faults(prev_layer_name):
+            for f in round.search_neuronal(prev_layer_name):
                 for s in f.sites:
-                    prev_spikes_out[s.unroll()] = f.model.perturb(prev_spikes_out[s.unroll()])
+                    # TODO: Verify that the correct version of the perturb function is called for parametric faults
+                    prev_spikes_out[s.unroll()] = f.model.perturb(prev_spikes_out[s.unroll()], s)
 
         return neuron_pre_hook
 
@@ -308,10 +313,11 @@ class Campaign:
             pre_hooks = layer._forward_pre_hooks.copy()
             layer._forward_pre_hooks.clear()
 
-            for f in round.get_parametric_faults(layer_name):
+            for f in round.search_parametric(layer_name):
                 flayer = f.model.flayer
                 fspike_out = flayer.spike(flayer.psp(layer(spikes_in)))
-                f.model.args = (fspike_out[next(iter(f)).unroll()],)
+                for s in f.sites:
+                    f.model.args[0][s] = fspike_out[s.unroll()]
 
             layer._forward_pre_hooks.update(pre_hooks)
 

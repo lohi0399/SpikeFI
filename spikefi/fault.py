@@ -1,4 +1,4 @@
-from copy import deepcopy
+from copy import copy, deepcopy
 from enum import auto, Flag
 from functools import reduce
 from operator import or_
@@ -7,15 +7,9 @@ from typing import Callable, Iterable, List, Tuple
 import torch
 from torch import Tensor
 
-import slayerSNN as snn
 from slayerSNN.slayer import spikeLayer
 
 from .utils.quantization import q2i_dtype, quant_args_from_range
-
-# TODO: Allow for selection of the fault's effectiveness in Time ? (= transient faults?)
-# e.g., for either a neuron, or a synapse fault:
-# set faulty output only for t_a:t_b in the tensor's 5th dim,
-# while keeping the golden one for the rest of the output's timesteps
 
 
 class FaultSite:
@@ -112,12 +106,12 @@ class FaultModel:
         return site is not None and site in self.original and site in self.perturbed
 
     # Omitting the site means no restoration will be needed
-    def perturb(self, original: float | Tensor, site: FaultSite = None) -> float | Tensor:
-        perturbed = self.method(original, *self.args)
+    def perturb(self, original: float | Tensor, site: FaultSite, *new_args) -> float | Tensor:
+        args_ = new_args or self.args
+        perturbed = self.method(original, *args_)
 
-        if site is not None:
-            self.original[site] = original
-            self.perturbed[site] = perturbed
+        self.original[site] = original
+        self.perturbed[site] = perturbed
 
         return perturbed
 
@@ -157,7 +151,7 @@ class FaultModel:
 
 class ParametricFaultModel(FaultModel):
     def __init__(self, param_name: str, param_method: Callable[..., float | Tensor], *param_args) -> None:
-        super().__init__(FaultTarget.PARAMETER, FaultModel.set_value)
+        super().__init__(FaultTarget.PARAMETER, FaultModel.set_value, dict())
 
         self.param_name = param_name
         self.param_method = param_method
@@ -177,12 +171,11 @@ class ParametricFaultModel(FaultModel):
         return super().__str__() + f" | Parametric: '{self.param_name}', {self.param_method.__name__}"
 
     def _key(self) -> Tuple:
-        return super()._key() + (self.param_name, self.param_method, self.param_args)
+        return self.target, self.method, self.param_name, self.param_method, self.param_args
 
     def is_param_perturbed(self) -> bool:
         return self.flayer is not None
 
-    # Parametric faults have only one site, so original and perturbed variables are scalars
     def param_perturb(self, slayer: spikeLayer) -> None:
         self.flayer = deepcopy(slayer)
 
@@ -198,6 +191,9 @@ class ParametricFaultModel(FaultModel):
         self.flayer = None
 
         return tore
+
+    def perturb(self, original: float | Tensor, site: FaultSite) -> float | Tensor:
+        return super().perturb(original, site, self.args[0][site])
 
 
 # Neuron fault models
@@ -238,7 +234,7 @@ class Fault:
         self.sites = set()
         self.sites_pending = []
 
-        if not sites and not random_sites_num:
+        if sites is None and not random_sites_num:
             return
 
         if isinstance(sites, Iterable):
@@ -297,6 +293,13 @@ class Fault:
         else:
             self.sites_pending.append(site)
 
+    def breakdown(self) -> List['Fault']:
+        separated_faults = []
+        for s in self.get_sites(include_pending=True):
+            separated_faults.append(Fault(deepcopy(self.model), s))
+
+        return separated_faults
+
     def get_sites(self, include_pending: bool = False) -> List[FaultSite]:
         return list(self.sites) + (self.sites_pending if include_pending else [])
 
@@ -329,145 +332,79 @@ class Fault:
             self.add_site(s)
 
 
-class FaultRound:
-    def __init__(self) -> None:
-        self.stats = snn.utils.stats()
-        self.round = {}
-        self.keys = set()
-        self.fault_map = {}
-
-    def __bool__(self) -> bool:
-        return bool(self.round)
-
-    def __contains__(self, fault: Fault) -> bool:
-        for fset in self.round.values():
-            if fault in fset:
-                return True
-
-        return False
-
-    def __len__(self) -> int:
-        return len(self.round)
-
-    # TODO: Verify iterable of FaultRound
-    def __iter__(self):
-        self._faults = self.round.values()
-        return iter(self._faults)
-
-    def __next__(self):
-        return next(self._faults)
+class FaultRound(dict):
+    def __init__(self, *args, **kwargs) -> None:
+        if 'faults' in kwargs or (args and isinstance(args[0], Iterable) and all(isinstance(el, Fault) for el in args[0])):
+            super().__init__()
+            self.insert_many(kwargs.get('faults', args[0]))
+        else:
+            super().__init__(*args, **kwargs)
 
     def __repr__(self) -> str:
-        s = 'Fault Round: {'
-        for lay_name, fault_set in self.round.items():
-            s += f"\n  '{lay_name}': {fault_set}"
-
-        return s + '\n}'
+        return self._info(verbose=True)
 
     def __str__(self) -> str:
+        return self._info(verbose=False)
+
+    def _info(self, verbose: bool) -> str:
+        sfunc = repr if verbose else str
         s = 'Fault Round: {'
-        for lay_name, fault_set in self.round.items():
-            s += f"\n  '{lay_name}': {', '.join(map(str, fault_set))}"
+        for key, fault in self.items():
+            s += f"\n  '{key[0]}': {sfunc(fault)}"
 
         return s + '\n}'
 
-    def _create_fault_map(self) -> None:
-        self.keys = set(self.round.keys())
-        self.fault_map = {name: {t: False for t in FaultTarget} for name in self.keys}
+    def extract(self, fault: Fault) -> None:
+        if not fault:
+            return
 
-        for lay_fset in self.round.values():
-            for f in lay_fset:
-                for s in f.sites:
-                    self.fault_map[s.layer][FaultTarget.Z] |= f.model.is_neuronal()
-                    self.fault_map[s.layer][FaultTarget.P] |= f.model.is_parametric()
-                    self.fault_map[s.layer][FaultTarget.W] |= f.model.is_synaptic()
+        for s in copy(fault.sites):
+            key = (s.layer, fault.model)
+            f = self.get(key)
+            if f is not None:
+                f.sites.discard(s)
+                if not f:
+                    del self[key]
 
-    def get_faults(self, layer_name: str = None, targets: FaultTarget = FaultTarget(0)) -> List[Fault]:
-        if layer_name and layer_name not in self.keys:
-            return []
-
-        faults = self.round[layer_name] if layer_name else [f for lay_fset in self.round.values() for f in lay_fset]
-
-        if targets:
-            return [f for f in faults if f.model.target in targets]
-
-        return faults
-
-    def get_neuron_faults(self, layer_name: str = None) -> List[Fault]:
-        return self.get_faults(layer_name, FaultTarget.OUTPUT | FaultTarget.PARAMETER)
-
-    def get_parametric_faults(self, layer_name: str = None) -> List[Fault]:
-        return self.get_faults(layer_name, FaultTarget.PARAMETER)
-
-    def get_synapse_faults(self, layer_name: str = None) -> List[Fault]:
-        return self.get_faults(layer_name, FaultTarget.WEIGHT)
-
-    def has_faults(self, layer_name: str = None, targets: FaultTarget = FaultTarget.all()) -> bool:
-        if layer_name and layer_name not in self.keys:
-            return False
-
-        lay_names = [layer_name] if layer_name else self.keys
-
-        return any(self.fault_map[lay_name][t] for lay_name in lay_names for t in targets)
-
-    def has_neuron_faults(self, layer_name: str = None) -> bool:
-        return self.has_faults(layer_name, FaultTarget.OUTPUT | FaultTarget.PARAMETER)
-
-    def has_parametric_faults(self, layer_name: str = None) -> bool:
-        return self.has_faults(layer_name, FaultTarget.PARAMETER)
-
-    def has_synapse_faults(self, layer_name: str = None) -> bool:
-        return self.has_faults(layer_name, FaultTarget.WEIGHT)
-
-    def insert(self, faults: Iterable[Fault]) -> None:
+    def extract_many(self, faults: Iterable[Fault]) -> None:
+        if faults is None:
+            return
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
         for f in faults:
-            # TODO: Check here if FaultModel is already in the round
-            # If not, create an empty Fault with this FaultModel
-            # and use it directly in the sites loop (without try-catch)
-            for s in f.sites:
-                if s.layer not in self.round:
-                    self.round[s.layer] = []
+            self.extract(f)
 
-                # Make sure that each parametric fault has a single site,
-                # since fault model depends on the neuron's output
-                if f.model.is_parametric():
-                    f.model.args = tuple()
-                    self.round[s.layer].append(Fault(deepcopy(f.model), s))
-                    continue
+    def insert(self, fault: Fault) -> None:
+        if not fault:
+            return
 
-                try:
-                    lay_fault = next(lay_fault for lay_fault in self.round[s.layer] if lay_fault.model == f.model)
-                    lay_fault.add_site(s)
-                except StopIteration:
-                    self.round[s.layer].append(Fault(f.model, s))
+        for s in fault.sites:
+            key = (s.layer, fault.model)
+            self.setdefault(key, Fault(deepcopy(fault.model)))
+            self[key].add_site(s)
 
-        self._create_fault_map()
-
-    def remove(self, faults: Iterable[Fault]) -> None:
+    def insert_many(self, faults: Iterable[Fault]) -> None:
+        if faults is None:
+            return
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
         for f in faults:
-            if not f:
-                continue
-            for lay_name, lay_fset in self.round.items():
-                sites_to_remove = [s for s in f.sites if s.layer == lay_name]
-                if not sites_to_remove:
-                    continue
+            self.insert(f)
 
-                try:
-                    lay_fault = next(lay_fault for lay_fault in lay_fset if lay_fault.model == f.model)
-                    for s in sites_to_remove:
-                        if s in lay_fault:
-                            lay_fault.sites.discard(s)
+    def search(self, layer_name: str = None, target: FaultTarget = None) -> List[Fault]:
+        lay_keys = [k for k in self.keys() if k[0] == layer_name] if layer_name else self.keys()
+        if target and target != FaultTarget.all():
+            lay_keys = [k for k in lay_keys if k[1].target in target]
 
-                    # FIXME: Fault is no longer indexed by set because it and its hash are changed
-                    if not lay_fault:
-                        lay_fset.remove(lay_fault)
-                except StopIteration:
-                    continue
+        return [self[k] for k in lay_keys]
 
-        self._create_fault_map()
+    def search_neuronal(self, layer_name: str = None) -> List[Fault]:
+        return self.search(layer_name, FaultTarget.OUTPUT | FaultTarget.PARAMETER)
+
+    def search_parametric(self, layer_name: str = None) -> List[Fault]:
+        return self.search(layer_name, FaultTarget.PARAMETER)
+
+    def search_synaptic(self, layer_name: str = None) -> List[Fault]:
+        return self.search(layer_name, FaultTarget.WEIGHT)
