@@ -14,7 +14,7 @@ from .fault import Fault, FaultModel, FaultRound, FaultSite
 
 
 # TODO: Fix long lines
-# TODO: Logging (print status messages) from each method
+# TODO: Logging + more indicative output during inference
 
 
 class Campaign:
@@ -81,19 +81,18 @@ class Campaign:
 
         return layer_info_hook
 
-    def inject(self, faults: Iterable[Fault], round_idx: int = -1) -> Iterable[Fault]:
+    def inject(self, faults: Iterable[Fault], round_idx: int = -1) -> List[Fault]:
         assert -len(self.rounds) <= round_idx < len(self.rounds), f'Invalid round index {round_idx}'
 
-        inj_faults = deepcopy(faults)
-        self._assert_faults(inj_faults)
-        self.define_faults(inj_faults)
+        inj_faults = self.validate(faults)
+        self.define_random(inj_faults)
 
         self.rounds[round_idx].insert_many(inj_faults)
 
         return inj_faults
 
-    # Asserts only the defined sites
-    def _assert_faults(self, faults: Iterable[Fault]) -> Iterable[Fault]:
+    # Validate only the defined fault sites
+    def validate(self, faults: Iterable[Fault]) -> List[Fault]:
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
@@ -127,10 +126,11 @@ class Campaign:
 
         return valid_faults
 
-    def define_faults(self, faults: Iterable[Fault]) -> Iterable[Fault]:
+    def define_random(self, faults: Iterable[Fault]) -> Iterable[Fault]:
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
+        has_site_duplicates = False
         for f in faults:
             is_syn = f.model.is_synaptic()
             shapes = self.shapes_wei if is_syn else self.shapes_lay
@@ -150,11 +150,15 @@ class Campaign:
 
                 s.position = tuple(pos)
 
-            f.refresh()
+            f.refresh(discard_duplicates=False)
+            has_site_duplicates |= bool(f.sites_pending)
+
+        if has_site_duplicates:
+            print('Some of the newly defined random fault sites already exist.')
 
         return faults
 
-    def then_inject(self, faults: Iterable[Fault]) -> Iterable[Fault]:
+    def then_inject(self, faults: Iterable[Fault]) -> List[Fault]:
         self.rounds.append(FaultRound())
         return self.inject(faults, -1)
 
@@ -185,8 +189,7 @@ class Campaign:
         if not self.rounds:
             self.rounds.append(FaultRound())
 
-    # TODO: Store round index in self to avoid passing the round as a parameter? (probably not compatible with optimizations)
-    def run(self, test_loader: DataLoader) -> None:
+    def run(self, test_loader: DataLoader, error: snn.loss = None) -> None:
         for round in self.rounds:
             stats = snn.utils.stats()
             self.stats.append(stats)
@@ -196,7 +199,7 @@ class Campaign:
             self._perturb_synap(round)
             self._perturb_param(round)
 
-            self._evaluate(round, stats, test_loader)
+            self._evaluate(round, stats, test_loader, error)
 
             self._restore_param(round)
             self._restore_synap(round)
@@ -240,8 +243,9 @@ class Campaign:
             for s in f.sites:
                 # Restore weights after the end of the round (no hook needed)
                 original = f.model.restore(s)
-                if original:
-                    self.injectables[s.layer].weight[s.unroll()] = original
+                if original is not None:
+                    with torch.no_grad():
+                        self.injectables[s.layer].weight[s.unroll()] = original
 
     def _perturb_param(self, round: FaultRound) -> None:
         # Create a dummy layer for each parametric fault
@@ -253,7 +257,7 @@ class Campaign:
         for f in round.search_parametric():
             f.model.param_restore()
 
-    def _evaluate(self, round: FaultRound, stats: snn.utils.stats, test_loader: DataLoader) -> None:
+    def _evaluate(self, round: FaultRound, stats: snn.utils.stats, test_loader: DataLoader, error: snn.loss = None) -> None:
         is_out_faulty = bool(round.search_neuronal(self.names_lay[-1]))
         out_neuron_callable = self._neuron_pre_hook_wrapper(round, self.names_lay[-1])
 
@@ -263,17 +267,22 @@ class Campaign:
 
             with torch.no_grad():
                 output = self.faulty_net.forward(input)
-            if is_out_faulty:
-                out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
+                if is_out_faulty:
+                    out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
 
-            # TODO: Store loss statistics, too
+            # Testing stats
             stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
             stats.testing.numSamples += len(label)
-            stats.print(0, b)  # TODO: Make output more indicative
+
+            if error:
+                loss = error.numSpikes(output, target)
+                stats.testing.lossSum += loss.cpu().item()
+
+            stats.print(0, b)
 
         stats.update()
 
-    def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layer_names: Iterable[str] = None) -> None:
+    def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layer_names: Iterable[str] = None, error: snn.loss = None) -> None:
         if not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
             raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
 
@@ -287,20 +296,19 @@ class Campaign:
         for lay_name in lay_names_inj:
             lay_shape = shapes[lay_name]
             for k in range(lay_shape[0] if is_syn else 1):
-                for l in range(lay_shape[0 + is_syn]):
+                for l in range(lay_shape[0 + is_syn]):          # noqa: E741
                     for m in range(lay_shape[1 + is_syn]):
                         for n in range(lay_shape[2 + is_syn]):
                             self.then_inject(
                                 [Fault(fault_model, FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
 
-        self.run(test_loader)
+        self.run(test_loader, error)
 
     def _neuron_pre_hook_wrapper(self, round: FaultRound, prev_layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...]], None]:
         def neuron_pre_hook(_, args: Tuple[Any, ...]) -> None:
             prev_spikes_out = args[0]
             for f in round.search_neuronal(prev_layer_name):
                 for s in f.sites:
-                    # TODO: Verify that the correct version of the perturb function is called for parametric faults
                     prev_spikes_out[s.unroll()] = f.model.perturb(prev_spikes_out[s.unroll()], s)
 
         return neuron_pre_hook
