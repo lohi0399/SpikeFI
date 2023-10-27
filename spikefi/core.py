@@ -42,8 +42,12 @@ class Campaign:
 
         s += f"  - Layers ({len(self.layers)}): {{\n"
         for lay_idx, lay_name in enumerate(self.names_lay):
-            s += f"      #{lay_idx}: '{lay_name}' ({'' if lay_name in self.names_inj else 'non '}injectable)\n"
-            s += f"        Shapes: neurons {self.shapes_lay[lay_name]} | synapses {self.shapes_wei[lay_name]}\n"
+            has_weights = self.shapes_wei[lay_name][0] > 0
+            neu = "{:2d} x {:2d} x {:2d}".format(*self.shapes_lay[lay_name])
+            syn = "{:2d} x {:2d} x {:2d} x {:2d}".format(*self.shapes_wei[lay_name]) if has_weights else "-"
+
+            s += f"      #{lay_idx:2d}: '{lay_name}' {type(self.layers[lay_name]).__name__} ({'' if lay_name in self.names_inj else 'non '}injectable)\n"
+            s += f"        Shapes: neurons {neu} | synapses {syn}\n"
         s += '  }\n'
 
         s += f"  - Rounds ({len(self.rounds)}): {{\n"
@@ -54,7 +58,6 @@ class Campaign:
 
         return s
 
-    # TODO: Test when containing dropout layers, too
     def _assume_layer_info(self, shape_in: Tuple[int, int, int]) -> None:
         handles = []
         for name, child in self.faulty_net.named_children():
@@ -69,11 +72,13 @@ class Campaign:
 
     def _layer_info_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...], Tensor], None]:
         def layer_info_hook(layer: nn.Module, _, output: Tensor) -> None:
+            has_weigths = isinstance(layer, nn.Conv3d) or isinstance(layer, nn.ConvTranspose3d)
+
             self.layers[layer_name] = layer
             self.names_lay.append(layer_name)
 
             self.shapes_lay[layer_name] = tuple(output.shape[1:4])
-            self.shapes_wei[layer_name] = tuple(layer.weight.shape[0:4])
+            self.shapes_wei[layer_name] = tuple(layer.weight.shape[0:4]) if has_weigths else (-1,) * 4
 
             if type(layer) in [_convLayer, _denseLayer]:
                 self.injectables[layer_name] = layer

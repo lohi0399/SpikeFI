@@ -7,11 +7,12 @@ import slayerSNN as snn
 import os
 import pickle
 
-# TODO: Rename variables/classes according to naming rules and remove unecessary code
+# TODO: Polish example script
 
 example_dir = os.path.dirname(__file__)
 net_params = snn.params(os.path.join(example_dir, 'nmnist.yaml'))
 test_only = True
+w_dropout = True
 
 
 # Dataset definition
@@ -52,12 +53,17 @@ class nmnistNetwork(torch.nn.Module):
         self.SP1 = slayer.pool(2)
         self.SP2 = slayer.pool(2)
         self.SF1 = slayer.dense((8, 8, 64), 10)
+        self.SD1 = slayer.dropout(0.3)
 
     def forward(self, s_in):
         s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 32, 32, 16
         s_out = self.slayer.spike(self.slayer.psp(self.SP1(s_out)))  # 16, 16, 16
+        if w_dropout:
+            s_out = self.SD1(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SC2(s_out)))  # 16, 16, 32
         s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  #  8,  8, 32
+        if w_dropout:
+            s_out = self.SD1(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  #  8,  8, 64
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 10
 
@@ -113,7 +119,7 @@ if __name__ == '__main__':
     #   snn.io.showTD(snn.io.spikeArrayToEvent(input.reshape((2, 34, 34, -1)).cpu().data.numpy()))
 
     if test_only:
-        net = torch.load(os.path.join(example_dir, 'out/nmnist.pt'))
+        net = torch.load(os.path.join(example_dir, f"out/nmnist{'_do' if w_dropout else ''}.pt"))
 
         # Testing loop.
         for i, (input, target, label) in enumerate(testLoader, 0):
@@ -189,10 +195,10 @@ if __name__ == '__main__':
 
     # Save trained network.
     os.makedirs(os.path.join(example_dir, 'out'), exist_ok=True)
-    torch.save(net, os.path.join(example_dir, 'out/nmnist.pt'))
+    torch.save(net, os.path.join(example_dir, f"out/nmnist{'_do' if w_dropout else ''}.pt"))
 
     # Save statistics
-    with open(os.path.join(example_dir, 'out/nmnist.pkl'), 'wb') as stats_file:
+    with open(os.path.join(example_dir, f"out/nmnist{'_do' if w_dropout else ''}.pkl"), 'wb') as stats_file:
         pickle.dump(stats, stats_file)
 
     # Plot the results.
