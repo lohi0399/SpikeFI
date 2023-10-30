@@ -213,25 +213,27 @@ class Campaign:
                 h.remove()
 
     def _register_hooks(self, round: FaultRound) -> List[RemovableHandle]:
-        handles = []
-        if not round.search_neuronal():
+        faults = round.search_neuronal()
+        if not faults:
             return []
 
-        # Neuron fault pre-hooks
-        # Neuron faults for last layer are evaluated directly on network's output (in _evaluate method)
-        for i, lay_name in enumerate(self.names_lay[:-1]):
-            if round.search_neuronal(lay_name):
-                # Register the pre-hook on the next layer of the faulty one
-                # to inject at its input, i.e., the output of the faulty layer
-                next_lay = self.layers[self.names_lay[i + 1]]
-                h = next_lay.register_forward_pre_hook(self._neuron_pre_hook_wrapper(round, lay_name))
-                handles.append(h)
+        handles = []
+        for f in faults:
+            is_param = f.model.is_parametric()
+            for s in f.sites:
+                lay_idx = self.names_lay.index(s.layer)
 
-        # Parametric fault pre-hooks
-        for lay_name, lay in self.injectables.items():
-            if round.search_parametric(lay_name):
-                h = lay.register_forward_pre_hook(self._parametric_pre_hook_wrapper(round, lay_name))
-                handles.append(h)
+                # Neuron fault pre-hooks
+                # Neuron faults for last layer are evaluated directly on network's output (in _evaluate method)
+                if lay_idx < len(self.layers) - 1:
+                    next_lay = self.layers[self.names_lay[lay_idx + 1]]
+                    h = next_lay.register_forward_pre_hook(self._neuron_pre_hook_wrapper(round, s.layer))
+                    handles.append(h)
+
+                # Parametric fault hooks
+                if is_param:
+                    h = self.layers[s.layer].register_forward_hook(self._parametric_hook_wrapper(round, s.layer))
+                    handles.append(h)
 
         return handles
 
@@ -318,20 +320,12 @@ class Campaign:
 
         return neuron_pre_hook
 
-    def _parametric_pre_hook_wrapper(self, round: FaultRound, layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...]], None]:
-        def parametric_pre_hook(layer: nn.Module, args: Tuple[Any, ...]) -> None:
-            spikes_in = args[0]
-
-            # Temporarily clear layer's pre-hooks, so that they are not called recursively
-            pre_hooks = layer._forward_pre_hooks.copy()
-            layer._forward_pre_hooks.clear()
-
+    def _parametric_hook_wrapper(self, round: FaultRound, layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...]], None]:
+        def parametric_hook(layer: nn.Module, _, spikes_out: Tensor) -> None:
             for f in round.search_parametric(layer_name):
                 flayer = f.model.flayer
-                fspike_out = flayer.spike(flayer.psp(layer(spikes_in)))
+                fspike_out = flayer.spike(flayer.psp(spikes_out))
                 for s in f.sites:
                     f.model.args[0][s] = fspike_out[s.unroll()]
 
-            layer._forward_pre_hooks.update(pre_hooks)
-
-        return parametric_pre_hook
+        return parametric_hook
