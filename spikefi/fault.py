@@ -7,6 +7,7 @@ from typing import Callable, Iterable, List, Tuple
 import torch
 from torch import Tensor
 
+import slayerSNN as snn
 from slayerSNN.slayer import spikeLayer
 
 from .utils.quantization import q2i_dtype, quant_args_from_range
@@ -334,6 +335,7 @@ class Fault:
 
 class FaultRound(dict):
     def __init__(self, *args, **kwargs) -> None:
+        self.stats = snn.utils.stats()
         if 'faults' in kwargs or (args and isinstance(args[0], Iterable) and all(isinstance(el, Fault) for el in args[0])):
             super().__init__()
             self.insert_many(kwargs.get('faults', args[0]))

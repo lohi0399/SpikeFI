@@ -1,6 +1,9 @@
 from copy import deepcopy
+from datetime import datetime
 import random
-from typing import Any, Callable, Iterable, List, Tuple
+from threading import Lock, Thread
+import time
+from typing import Any, Callable, Iterable, Iterator, List, Optional, Tuple  # TODO: Deprecate typing module
 
 import torch
 from torch import nn, Tensor
@@ -8,13 +11,14 @@ from torch.utils.data import DataLoader
 from torch.utils.hooks import RemovableHandle
 
 import slayerSNN as snn
-from slayerSNN.slayer import _convLayer, _denseLayer, spikeLayer
+from slayerSNN.slayer import spikeLayer
 
 from .fault import Fault, FaultModel, FaultRound, FaultSite
 
 
 # TODO: Fix long lines
-# TODO: Logging + more indicative output during inference
+# TODO: Logging
+# TODO: Save results
 
 
 class Campaign:
@@ -34,7 +38,8 @@ class Campaign:
         self._assume_layer_info(shape_in)
 
         self.rounds = [FaultRound()]
-        self.stats = []
+        self.round_groups = {}
+        self.progress = {}
 
     def __repr__(self) -> str:
         s = 'FI Campaign:\n'
@@ -72,6 +77,11 @@ class Campaign:
 
     def _layer_info_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...], Tensor], None]:
         def layer_info_hook(layer: nn.Module, _, output: Tensor) -> None:
+            # Unsupported layer types
+            if isinstance(layer, snn.slayer._pspLayer) or isinstance(layer, snn.slayer._pspFilter) or isinstance(layer, snn.slayer._delayLayer):
+                print('Attention: Unsupported layer type ' + type(layer) + ' found. Potential invalidity of results.')
+                return
+
             has_weigths = isinstance(layer, nn.Conv3d) or isinstance(layer, nn.ConvTranspose3d)
 
             self.layers[layer_name] = layer
@@ -80,7 +90,7 @@ class Campaign:
             self.shapes_lay[layer_name] = tuple(output.shape[1:4])
             self.shapes_wei[layer_name] = tuple(layer.weight.shape[0:4]) if has_weigths else (-1,) * 4
 
-            if type(layer) in [_convLayer, _denseLayer]:
+            if isinstance(layer, snn.slayer._convLayer) or isinstance(layer, snn.slayer._denseLayer):
                 self.injectables[layer_name] = layer
                 self.names_inj.append(layer_name)
 
@@ -194,23 +204,112 @@ class Campaign:
         if not self.rounds:
             self.rounds.append(FaultRound())
 
-    def run(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+    def run(self, test_loader: DataLoader, error: snn.loss = None, forward: Callable[[Tensor, Optional[str], Optional[str]], Iterator[Tensor]] = None) -> None:
+        self._prepare_rounds()
+        forward_ = forward or self._forward
+
+        self.progress = {
+            'progress': 0.,
+            'cur_batch': 0,
+            'batch_num': len(test_loader),
+            'cur_iter': 0,
+            'iter_num': len(test_loader) * len(self.rounds),
+            'fragment': 1. / (len(test_loader) * len(self.rounds)),
+            'time_sta': datetime.now()
+        }
+        self._show_progress(flush=False)
+
+        progr_thread = Thread(target=self._refresh_progress_job, args=(.001,))
+        progr_thread.daemon = True
+        progr_thread.start()
+        progr_lock = Lock()
+
+        # TODO: Check fault-free inference
+        # TODO: Allow for disabling optimizations
+        for b, (input, target, label) in enumerate(test_loader):  # For each batch
+            spikes_in = input.to(self.device)
+            layer_sta = None
+
+            for group_lay_name, round_group in self.round_groups.items():  # For each fault round group
+                spikes_in_iter = forward_(spikes_in, layer_sta, group_lay_name)
+                for spikes_in in spikes_in_iter:
+                    pass
+
+                spikes_out_iter = forward_(spikes_in, group_lay_name)
+                spikes_out = next(spikes_out_iter)
+                layer_sta = group_lay_name
+
+                is_out_faulty = group_lay_name == self.names_lay[-1]
+
+                for r in round_group:  # For each fault round
+                    round = self.rounds[r]
+                    handles = self._register_hooks(round)  # TODO: Register once and separate by fault round
+
+                    self._perturb_synap(round)
+                    self._perturb_param(round)
+
+                    round_spikes_iter = forward_(spikes_in, group_lay_name)
+
+                    output = next(round_spikes_iter)
+                    early_stop = not error and not is_out_faulty and torch.equal(output, spikes_out)
+
+                    if not early_stop:
+                        for output in round_spikes_iter:
+                            pass
+                        if is_out_faulty:
+                            out_neuron_callable = self._neuron_pre_hook_wrapper(round, self.names_lay[-1])
+                            with torch.no_grad():
+                                out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
+
+                    # Testing stats
+                    # TODO: Implement early stop correctly
+                    round.stats.testing.correctSamples += len(label) if early_stop else torch.sum(snn.predict.getClass(output) == label).item()
+                    round.stats.testing.numSamples += len(label)
+                    if error:
+                        round.stats.testing.lossSum += error.numSpikes(output, target.to(self.device)).cpu().item()
+
+                    self._restore_param(round)
+                    self._restore_synap(round)
+
+                    for h in handles:
+                        h.remove()
+
+                    with progr_lock:
+                        self.progress['progress'] += self.progress['fragment']
+                        self.progress['cur_iter'] += 1
+
+            with progr_lock:
+                self.progress['cur_batch'] = b
+
         for round in self.rounds:
-            stats = snn.utils.stats()
-            self.stats.append(stats)
+            round.stats.update()
 
-            handles = self._register_hooks(round)
+    def _prepare_rounds(self) -> None:
+        for r, round in enumerate(self.rounds):
+            round = FaultRound(sorted(round.items(), key=lambda item: self.names_lay.index(item[0][0])))
+            min_lay_name = next(iter(round.keys()), 'nominal')[0]
 
-            self._perturb_synap(round)
-            self._perturb_param(round)
+            self.round_groups.setdefault(min_lay_name, list())
+            self.round_groups[min_lay_name].append(r)
 
-            self._evaluate(round, stats, test_loader, error)
+        self.round_groups = dict(sorted(self.round_groups.items(), key=lambda item: self.names_lay.index(item[0])))
 
-            self._restore_param(round)
-            self._restore_synap(round)
+    def _forward(self, spikes_in: Tensor, layer_start: str = None, layer_end: str = None) -> Iterator[Tensor]:
+        s = torch.clone(spikes_in)
+        has_started = not layer_start
 
-            for h in handles:
-                h.remove()
+        for lay_name in self.names_lay:
+            if lay_name == layer_end:
+                break
+            has_started |= lay_name == layer_start
+            if not has_started:
+                continue
+
+            if not isinstance(self.layers[lay_name], snn.slayer._dropoutLayer):
+                with torch.no_grad():
+                    s = self.slayer.spike(self.slayer.psp(self.layers[lay_name](s)))
+
+            yield s
 
     def _register_hooks(self, round: FaultRound) -> List[RemovableHandle]:
         faults = round.search_neuronal()
@@ -224,7 +323,7 @@ class Campaign:
                 lay_idx = self.names_lay.index(s.layer)
 
                 # Neuron fault pre-hooks
-                # Neuron faults for last layer are evaluated directly on network's output (in _evaluate method)
+                # Neuron faults for last layer are evaluated directly on network's output
                 if lay_idx < len(self.layers) - 1:
                     next_lay = self.layers[self.names_lay[lay_idx + 1]]
                     h = next_lay.register_forward_pre_hook(self._neuron_pre_hook_wrapper(round, s.layer))
@@ -264,30 +363,27 @@ class Campaign:
         for f in round.search_parametric():
             f.model.param_restore()
 
-    def _evaluate(self, round: FaultRound, stats: snn.utils.stats, test_loader: DataLoader, error: snn.loss = None) -> None:
-        is_out_faulty = bool(round.search_neuronal(self.names_lay[-1]))
-        out_neuron_callable = self._neuron_pre_hook_wrapper(round, self.names_lay[-1])
+    def _show_progress(self, flush: bool = True) -> None:
+        if flush:
+            if not hasattr(self, '_progress_lines_num'):
+                self._progress_lines_num = 0
+            print('\033[1A\x1b[2K' * self._progress_lines_num)  # Line up, line clear
 
-        for b, (input, target, label) in enumerate(test_loader):
-            input = input.to(self.device)
-            target = target.to(self.device)
+        s = " Batch #\tTotal time\tProgress\n"
+        s += f"{self.progress['cur_batch'] + 1:4d}/{self.progress['batch_num']:d}\t"
+        s += f"{(datetime.now() - self.progress['time_sta']).total_seconds():.3f} sec\t"
+        s += f"{self.progress['progress'] * 100.:6.2f} %\t\n"
 
-            with torch.no_grad():
-                output = self.faulty_net.forward(input)
-                if is_out_faulty:
-                    out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
+        print(s)
 
-            # Testing stats
-            stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
-            stats.testing.numSamples += len(label)
+        self._progress_lines_num = s.count('\n') + 2
 
-            if error:
-                loss = error.numSpikes(output, target)
-                stats.testing.lossSum += loss.cpu().item()
+    def _refresh_progress_job(self, period_secs: float) -> None:
+        while self.progress['cur_iter'] < self.progress['iter_num']:
+            self._show_progress()
+            time.sleep(period_secs)
 
-            stats.print(0, b)
-
-        stats.update()
+        self._show_progress()
 
     def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layer_names: Iterable[str] = None, error: snn.loss = None) -> None:
         if not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
