@@ -1,9 +1,8 @@
 from collections.abc import Callable, Iterable, Iterator
 from copy import deepcopy
-from datetime import datetime
 import random
 from threading import Lock, Thread
-import time
+from time import sleep, time
 from typing import Any, Optional
 
 import torch
@@ -17,7 +16,7 @@ from slayerSNN.slayer import spikeLayer
 from .fault import Fault, FaultModel, FaultRound, FaultSite
 
 
-# TODO: Fix long lines
+# FIXME: Fix long lines
 # TODO: Logging
 # TODO: Save results
 
@@ -40,7 +39,6 @@ class Campaign:
 
         self.rounds = [FaultRound()]
         self.round_groups = {}
-        self.progress = {}
 
     def __repr__(self) -> str:
         s = 'FI Campaign:\n'
@@ -107,7 +105,6 @@ class Campaign:
 
         return inj_faults
 
-    # Validate only the defined fault sites
     def validate(self, faults: Iterable[Fault]) -> list[Fault]:
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
@@ -121,7 +118,7 @@ class Campaign:
                 continue
 
             to_remove = set()
-            for s in f.sites:
+            for s in f.sites:  # Validate only the defined fault sites
                 v = s.layer in self.injectables
                 if v:
                     if is_syn:
@@ -209,16 +206,7 @@ class Campaign:
         self._prepare_rounds()
         forward_ = forward or self._forward
 
-        self.progress = {
-            'progress': 0.,
-            'cur_batch': 0,
-            'batch_num': len(test_loader),
-            'cur_iter': 0,
-            'iter_num': len(test_loader) * len(self.rounds),
-            'fragment': 1. / (len(test_loader) * len(self.rounds)),
-            'time_sta': datetime.now()
-        }
-        self._show_progress(flush=False)
+        self.progress = Progress(len(test_loader), len(self.rounds))
 
         progr_thread = Thread(target=self._refresh_progress_job, args=(.001,))
         progr_thread.daemon = True
@@ -226,7 +214,6 @@ class Campaign:
         progr_lock = Lock()
 
         # TODO: Check fault-free inference
-        # TODO: Allow for disabling optimizations
         for b, (input, target, label) in enumerate(test_loader):  # For each batch
             spikes_in = input.to(self.device)
             layer_sta = None
@@ -263,7 +250,7 @@ class Campaign:
                                 out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
 
                     # Testing stats
-                    # TODO: Implement early stop correctly
+                    # FIXME: Implement early stop correctly
                     round.stats.testing.correctSamples += len(label) if early_stop else torch.sum(snn.predict.getClass(output) == label).item()
                     round.stats.testing.numSamples += len(label)
                     if error:
@@ -276,11 +263,10 @@ class Campaign:
                         h.remove()
 
                     with progr_lock:
-                        self.progress['progress'] += self.progress['fragment']
-                        self.progress['cur_iter'] += 1
+                        self.progress.step()
 
             with progr_lock:
-                self.progress['cur_batch'] = b
+                self.progress.step_batch()
 
         for round in self.rounds:
             round.stats.update()
@@ -364,27 +350,16 @@ class Campaign:
         for f in round.search_parametric():
             f.model.param_restore()
 
-    def _show_progress(self, flush: bool = True) -> None:
-        if flush:
-            if not hasattr(self, '_progress_lines_num'):
-                self._progress_lines_num = 0
-            print('\033[1A\x1b[2K' * self._progress_lines_num)  # Line up, line clear
-
-        s = " Batch #\tTotal time\tProgress\n"
-        s += f"{self.progress['cur_batch'] + 1:4d}/{self.progress['batch_num']:d}\t"
-        s += f"{(datetime.now() - self.progress['time_sta']).total_seconds():.3f} sec\t"
-        s += f"{self.progress['progress'] * 100.:6.2f} %\t\n"
-
-        print(s)
-
-        self._progress_lines_num = s.count('\n') + 2
+    def show_progress(self) -> None:
+        print('\033[1A\x1b[2K' * self.progress._flush_lines_num)  # Line up, line clear
+        print(self.progress)
 
     def _refresh_progress_job(self, period_secs: float) -> None:
-        while self.progress['cur_iter'] < self.progress['iter_num']:
-            self._show_progress()
-            time.sleep(period_secs)
+        while self.progress.iter < self.progress.iter_num:
+            self.show_progress()
+            sleep(period_secs)
 
-        self._show_progress()
+        self.show_progress()
 
     def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layer_names: Iterable[str] = None, error: snn.loss = None) -> None:
         if not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
@@ -426,3 +401,33 @@ class Campaign:
                     f.model.args[0][s] = fspike_out[s.unroll()]
 
         return parametric_hook
+
+
+class Progress:
+    def __init__(self, batches_num: int, rounds_num: int) -> None:
+        self.status = 0.
+        self.batch = 0
+        self.batch_num = batches_num
+        self.iter = 0
+        self.iter_num = batches_num * rounds_num
+        self.fragment = 1. / self.iter_num
+        self.start_time = time()
+        
+        self._flush_lines_num = 0
+
+    def __str__(self) -> str:
+        s = " Batch #\tTotal time\tProgress\n"
+        s += f"{self.batch + 1:4d}/{self.batch_num:d}\t"
+        s += f"{(time() - self.start_time):.3f} sec\t"
+        s += f"{self.status * 100.:6.2f} %\t\n"
+
+        self._flush_lines_num = s.count('\n') + 2
+        
+        return s
+
+    def step(self) -> None:
+        self.status += self.fragment
+        self.iter += 1
+    
+    def step_batch(self) -> None:
+        self.batch += 1
