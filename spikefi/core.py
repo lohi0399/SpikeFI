@@ -81,17 +81,22 @@ class Campaign:
                 print('Attention: Unsupported layer type ' + type(layer) + ' found. Potential invalidity of results.')
                 return
 
-            has_weigths = isinstance(layer, nn.Conv3d) or isinstance(layer, nn.ConvTranspose3d)
+            # Injectable layers
+            if isinstance(layer, snn.slayer._convLayer) or isinstance(layer, snn.slayer._denseLayer):
+                if layer_name in self.names_inj:
+                    print('Cannot use an injectable layer more than once in the network.')
+                    return
+                
+                self.injectables[layer_name] = layer
+                self.names_inj.append(layer_name)
 
             self.layers[layer_name] = layer
             self.names_lay.append(layer_name)
 
+            has_weigths = isinstance(layer, nn.Conv3d) or isinstance(layer, nn.ConvTranspose3d)
+
             self.shapes_lay[layer_name] = tuple(output.shape[1:4])
             self.shapes_wei[layer_name] = tuple(layer.weight.shape[0:4]) if has_weigths else (-1,) * 4
-
-            if isinstance(layer, snn.slayer._convLayer) or isinstance(layer, snn.slayer._denseLayer):
-                self.injectables[layer_name] = layer
-                self.names_inj.append(layer_name)
 
         return layer_info_hook
 
@@ -274,7 +279,7 @@ class Campaign:
     def _prepare_rounds(self) -> None:
         for r, round in enumerate(self.rounds):
             round = FaultRound(sorted(round.items(), key=lambda item: self.names_lay.index(item[0][0])))
-            min_lay_name = next(iter(round.keys()), 'nominal')[0]
+            min_lay_name = next(iter(round.keys()), (None,))[0] or 'nominal'
 
             self.round_groups.setdefault(min_lay_name, list())
             self.round_groups[min_lay_name].append(r)
