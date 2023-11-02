@@ -1,9 +1,10 @@
+from collections.abc import Callable, Iterable, Iterator
 from copy import deepcopy
 from datetime import datetime
 import random
 from threading import Lock, Thread
 import time
-from typing import Any, Callable, Iterable, Iterator, List, Optional, Tuple  # TODO: Deprecate typing module
+from typing import Any, Optional
 
 import torch
 from torch import nn, Tensor
@@ -22,7 +23,7 @@ from .fault import Fault, FaultModel, FaultRound, FaultSite
 
 
 class Campaign:
-    def __init__(self, net: nn.Module, shape_in: Tuple[int, int, int], slayer: spikeLayer) -> None:
+    def __init__(self, net: nn.Module, shape_in: tuple[int, int, int], slayer: spikeLayer) -> None:
         self.golden_net = net
         self.faulty_net = deepcopy(net)
         self.faulty_net.eval()
@@ -63,7 +64,7 @@ class Campaign:
 
         return s
 
-    def _assume_layer_info(self, shape_in: Tuple[int, int, int]) -> None:
+    def _assume_layer_info(self, shape_in: tuple[int, int, int]) -> None:
         handles = []
         for name, child in self.faulty_net.named_children():
             h = child.register_forward_hook(self._layer_info_hook_wrapper(name))
@@ -75,7 +76,7 @@ class Campaign:
         for h in handles:
             h.remove()
 
-    def _layer_info_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...], Tensor], None]:
+    def _layer_info_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, tuple[Any, ...], Tensor], None]:
         def layer_info_hook(layer: nn.Module, _, output: Tensor) -> None:
             # Unsupported layer types
             if isinstance(layer, snn.slayer._pspLayer) or isinstance(layer, snn.slayer._pspFilter) or isinstance(layer, snn.slayer._delayLayer):
@@ -96,7 +97,7 @@ class Campaign:
 
         return layer_info_hook
 
-    def inject(self, faults: Iterable[Fault], round_idx: int = -1) -> List[Fault]:
+    def inject(self, faults: Iterable[Fault], round_idx: int = -1) -> list[Fault]:
         assert -len(self.rounds) <= round_idx < len(self.rounds), f'Invalid round index {round_idx}'
 
         inj_faults = self.validate(faults)
@@ -107,7 +108,7 @@ class Campaign:
         return inj_faults
 
     # Validate only the defined fault sites
-    def validate(self, faults: Iterable[Fault]) -> List[Fault]:
+    def validate(self, faults: Iterable[Fault]) -> list[Fault]:
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
@@ -173,7 +174,7 @@ class Campaign:
 
         return faults
 
-    def then_inject(self, faults: Iterable[Fault]) -> List[Fault]:
+    def then_inject(self, faults: Iterable[Fault]) -> list[Fault]:
         self.rounds.append(FaultRound())
         return self.inject(faults, -1)
 
@@ -311,7 +312,7 @@ class Campaign:
 
             yield s
 
-    def _register_hooks(self, round: FaultRound) -> List[RemovableHandle]:
+    def _register_hooks(self, round: FaultRound) -> list[RemovableHandle]:
         faults = round.search_neuronal()
         if not faults:
             return []
@@ -407,8 +408,8 @@ class Campaign:
 
         self.run(test_loader, error)
 
-    def _neuron_pre_hook_wrapper(self, round: FaultRound, prev_layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...]], None]:
-        def neuron_pre_hook(_, args: Tuple[Any, ...]) -> None:
+    def _neuron_pre_hook_wrapper(self, round: FaultRound, prev_layer_name: str) -> Callable[[nn.Module, tuple[Any, ...]], None]:
+        def neuron_pre_hook(_, args: tuple[Any, ...]) -> None:
             prev_spikes_out = args[0]
             for f in round.search_neuronal(prev_layer_name):
                 for s in f.sites:
@@ -416,7 +417,7 @@ class Campaign:
 
         return neuron_pre_hook
 
-    def _parametric_hook_wrapper(self, round: FaultRound, layer_name: str) -> Callable[[nn.Module, Tuple[Any, ...]], None]:
+    def _parametric_hook_wrapper(self, round: FaultRound, layer_name: str) -> Callable[[nn.Module, tuple[Any, ...]], None]:
         def parametric_hook(layer: nn.Module, _, spikes_out: Tensor) -> None:
             for f in round.search_parametric(layer_name):
                 flayer = f.model.flayer

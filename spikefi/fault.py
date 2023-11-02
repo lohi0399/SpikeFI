@@ -1,8 +1,8 @@
+from collections.abc import Callable, Iterable
 from copy import copy, deepcopy
 from enum import auto, Flag
 from functools import reduce
 from operator import or_
-from typing import Callable, Iterable, List, Tuple
 
 import torch
 from torch import Tensor
@@ -14,7 +14,7 @@ from .utils.quantization import q2i_dtype, quant_args_from_range
 
 
 class FaultSite:
-    def __init__(self, layer_name: str = None, position: Tuple[int | slice, int, int, int] = (None,) * 4) -> None:
+    def __init__(self, layer_name: str = None, position: tuple[int | slice, int, int, int] = (None,) * 4) -> None:
         # pos0 is integer for synaptic faults and either integer or slice for neuron faults
         self.layer = layer_name
 
@@ -35,7 +35,7 @@ class FaultSite:
         return "Fault Site @ layer '" + (self.layer or '*') + "' " \
             + "(" + ", ".join(list(map(FaultSite.pos2str, self.position))) + ")"
 
-    def _key(self) -> Tuple:
+    def _key(self) -> tuple:
         pos0 = self.position[0]
         pos0_key = (pos0.start, pos0.stop, pos0.step) if isinstance(pos0, slice) else pos0
 
@@ -44,7 +44,7 @@ class FaultSite:
     def is_defined(self) -> bool:
         return bool(self.layer) and all(pos is not None for pos in self.position)
 
-    def unroll(self) -> Tuple[int | slice, int, int, int, slice]:
+    def unroll(self) -> tuple[int | slice, int, int, int, slice]:
         return self.position + (slice(None),)
 
     @staticmethod
@@ -87,7 +87,7 @@ class FaultModel:
     def __str__(self) -> str:
         return f"Fault Model '{self.get_name()}': {self.target}, {self.method.__name__}"
 
-    def _key(self) -> Tuple:
+    def _key(self) -> tuple:
         return self.target, self.method, self.args
 
     def get_name(self) -> str:
@@ -171,7 +171,7 @@ class ParametricFaultModel(FaultModel):
     def __str__(self) -> str:
         return super().__str__() + f" | Parametric: '{self.param_name}', {self.param_method.__name__}"
 
-    def _key(self) -> Tuple:
+    def _key(self) -> tuple:
         return self.target, self.method, self.param_name, self.param_method, self.param_args
 
     def is_param_perturbed(self) -> bool:
@@ -294,14 +294,14 @@ class Fault:
         else:
             self.sites_pending.append(site)
 
-    def breakdown(self) -> List['Fault']:
+    def breakdown(self) -> list['Fault']:
         separated_faults = []
         for s in self.get_sites(include_pending=True):
             separated_faults.append(Fault(deepcopy(self.model), s))
 
         return separated_faults
 
-    def get_sites(self, include_pending: bool = False) -> List[FaultSite]:
+    def get_sites(self, include_pending: bool = False) -> list[FaultSite]:
         return list(self.sites) + (self.sites_pending if include_pending else [])
 
     def is_complete(self) -> bool:
@@ -395,18 +395,18 @@ class FaultRound(dict):
         for f in faults:
             self.insert(f)
 
-    def search(self, layer_name: str = None, target: FaultTarget = None) -> List[Fault]:
+    def search(self, layer_name: str = None, target: FaultTarget = None) -> list[Fault]:
         lay_keys = [k for k in self.keys() if k[0] == layer_name] if layer_name else self.keys()
         if target and target != FaultTarget.all():
             lay_keys = [k for k in lay_keys if k[1].target in target]
 
         return [self[k] for k in lay_keys]
 
-    def search_neuronal(self, layer_name: str = None) -> List[Fault]:
+    def search_neuronal(self, layer_name: str = None) -> list[Fault]:
         return self.search(layer_name, FaultTarget.OUTPUT | FaultTarget.PARAMETER)
 
-    def search_parametric(self, layer_name: str = None) -> List[Fault]:
+    def search_parametric(self, layer_name: str = None) -> list[Fault]:
         return self.search(layer_name, FaultTarget.PARAMETER)
 
-    def search_synaptic(self, layer_name: str = None) -> List[Fault]:
+    def search_synaptic(self, layer_name: str = None) -> list[Fault]:
         return self.search(layer_name, FaultTarget.WEIGHT)
