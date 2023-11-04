@@ -3,7 +3,7 @@ from copy import deepcopy
 import random
 from threading import Lock, Thread
 from time import sleep, time
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from torch import nn, Tensor
@@ -17,7 +17,7 @@ from .fault import Fault, FaultModel, FaultRound, FaultSite
 
 
 # FIXME: Fix long lines
-# TODO: Logging
+# TODO: Logging + silent
 # TODO: Save results
 
 
@@ -44,7 +44,7 @@ class Campaign:
         s = 'FI Campaign:\n'
         s += f"  - Network: '{self.faulty_net.__class__.__name__}':\n"
 
-        s += f"  - Layers ({len(self.layers)}): {{\n"
+        s += f"  - Layers ({len(self.layers)} in {len(self.names_lay)} levels): {{\n"
         for lay_idx, lay_name in enumerate(self.names_lay):
             has_weights = self.shapes_wei[lay_name][0] > 0
             neu = "{:2d} x {:2d} x {:2d}".format(*self.shapes_lay[lay_name])
@@ -86,7 +86,7 @@ class Campaign:
                 if layer_name in self.names_inj:
                     print('Cannot use an injectable layer more than once in the network.')
                     return
-                
+
                 self.injectables[layer_name] = layer
                 self.names_inj.append(layer_name)
 
@@ -207,101 +207,142 @@ class Campaign:
         if not self.rounds:
             self.rounds.append(FaultRound())
 
-    def run(self, test_loader: DataLoader, error: snn.loss = None, forward: Callable[[Tensor, Optional[str], Optional[str]], Iterator[Tensor]] = None) -> None:
+    def run(self, test_loader: DataLoader, error: snn.loss = None) -> None:
         self._prepare_rounds()
-        forward_ = forward or self._forward
 
         self.progress = Progress(len(test_loader), len(self.rounds))
+        self.progress_lock = Lock()
 
-        progr_thread = Thread(target=self._refresh_progress_job, args=(.001,))
-        progr_thread.daemon = True
+        progr_thread = Thread(target=self._refresh_progress_job, args=(.1,), daemon=True)
         progr_thread.start()
-        progr_lock = Lock()
 
-        # TODO: Check fault-free inference
-        for b, (input, target, label) in enumerate(test_loader):  # For each batch
-            spikes_in = input.to(self.device)
-            layer_sta = None
-
-            for group_lay_name, round_group in self.round_groups.items():  # For each fault round group
-                spikes_in_iter = forward_(spikes_in, layer_sta, group_lay_name)
-                for spikes_in in spikes_in_iter:
-                    pass
-
-                spikes_out_iter = forward_(spikes_in, group_lay_name)
-                spikes_out = next(spikes_out_iter)
-                layer_sta = group_lay_name
-
-                is_out_faulty = group_lay_name == self.names_lay[-1]
-
-                for r in round_group:  # For each fault round
-                    round = self.rounds[r]
-                    handles = self._register_hooks(round)  # TODO: Register once and separate by fault round
-
-                    self._perturb_synap(round)
-                    self._perturb_param(round)
-
-                    round_spikes_iter = forward_(spikes_in, group_lay_name)
-
-                    output = next(round_spikes_iter)
-                    early_stop = not error and not is_out_faulty and torch.equal(output, spikes_out)
-
-                    if not early_stop:
-                        for output in round_spikes_iter:
-                            pass
-                        if is_out_faulty:
-                            out_neuron_callable = self._neuron_pre_hook_wrapper(round, self.names_lay[-1])
-                            with torch.no_grad():
-                                out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
-
-                    # Testing stats
-                    # FIXME: Implement early stop correctly
-                    round.stats.testing.correctSamples += len(label) if early_stop else torch.sum(snn.predict.getClass(output) == label).item()
-                    round.stats.testing.numSamples += len(label)
-                    if error:
-                        round.stats.testing.lossSum += error.numSpikes(output, target.to(self.device)).cpu().item()
-
-                    self._restore_param(round)
-                    self._restore_synap(round)
-
-                    for h in handles:
-                        h.remove()
-
-                    with progr_lock:
-                        self.progress.step()
-
-            with progr_lock:
-                self.progress.step_batch()
+        with torch.no_grad():
+            if len(self.rounds) <= 1:
+                self._evaluate_single(test_loader, error)
+            else:
+                self._evaluate_optimized(test_loader, error)
 
         for round in self.rounds:
             round.stats.update()
 
+        progr_thread.join()
+
+    def _evaluate_single(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+        round = self.rounds[0]
+        is_out_faulty = False
+
+        if round:
+            round_max_lay = list(round.keys())[-1][0]
+            is_out_faulty = round_max_lay == self.names_lay[-1]
+
+            if is_out_faulty:
+                out_neuron_callable = self._neuron_pre_hook_wrapper(round, self.names_lay[-1])
+                out_lay = self.layers[self.names_lay[-1]]
+
+            handles = self._register_hooks(round)
+            self._perturb_synap(round)
+            self._perturb_param(round)
+
+        for b, (input, target, label) in enumerate(test_loader):
+            for output in self._forward(input.to(self.device)):
+                pass
+
+            if is_out_faulty:
+                out_neuron_callable(out_lay, (output,))
+
+            self._stats_step(round.stats, output, target, label, error)
+
+            with self.progress_lock:
+                self.progress.step()
+                self.progress.set_batch(b)
+
+        if round:
+            self._restore_param(round)
+            self._restore_synap(round)
+            for h in handles:
+                h.remove()
+
+    def _evaluate_optimized(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+        out_lay_idx = len(self.names_lay) - 1
+        for b, (input, target, label) in enumerate(test_loader):  # For each batch
+            # Store golden spikes
+            spikes = [input.to(self.device)] + [spikes for spikes in self._forward(input.to(self.device))]
+
+            for group_lay_name, round_group in self.round_groups.items():  # For each fault round group
+                group_lay_idx = self.names_lay.index(group_lay_name)
+                spikes_lay_in = spikes[group_lay_idx]
+
+                for r in round_group:  # For each fault round
+                    round = self.rounds[r]
+
+                    # TODO: Move out of the loop
+                    handles = self._register_hooks(round)
+                    self._perturb_synap(round)
+                    self._perturb_param(round)
+
+                    round_max_lay_name = list(round.keys())[-1][0]
+                    round_max_lay_idx = self.names_lay.index(round_max_lay_name)
+                    for spikes_round_out in self._forward(spikes_lay_in, group_lay_name, round_max_lay_name):
+                        pass
+
+                    if round_max_lay_idx != out_lay_idx:  # if not is_out_faulty
+                        # Early stop optimization
+                        if torch.equal(spikes_round_out, spikes[round_max_lay_idx + 1]):
+                            output = spikes[-1]
+                        else:
+                            for output in self._forward(spikes_round_out, self.names_lay[round_max_lay_idx + 1]):
+                                pass
+                    else:
+                        output = spikes_round_out
+                        out_neuron_callable = self._neuron_pre_hook_wrapper(round, self.names_lay[-1])
+                        out_neuron_callable(self.layers[self.names_lay[-1]], (output,))
+
+                    # Testing stats
+                    self._stats_step(round.stats, output, target, label, error)
+
+                    self._restore_param(round)
+                    self._restore_synap(round)
+                    for h in handles:
+                        h.remove()
+
+                    with self.progress_lock:
+                        self.progress.step()
+
+            with self.progress_lock:
+                self.progress.set_batch(b)
+
+    def _stats_step(self, stats: snn.utils.stats(), output: Tensor, target: Tensor, label: Tensor, error: snn.loss = None) -> None:
+        stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
+        stats.testing.numSamples += len(label)
+        if error:
+            stats.testing.lossSum += error.numSpikes(output, target.to(self.device)).cpu().item()
+
     def _prepare_rounds(self) -> None:
         for r, round in enumerate(self.rounds):
-            round = FaultRound(sorted(round.items(), key=lambda item: self.names_lay.index(item[0][0])))
-            min_lay_name = next(iter(round.keys()), (None,))[0] or 'nominal'
+            round = self.rounds[r] = FaultRound(sorted(round.items(), key=lambda item: self.names_lay.index(item[0][0])))
+            min_lay_name = next(iter(round.keys()), (None,))[0] or 'golden'
 
             self.round_groups.setdefault(min_lay_name, list())
             self.round_groups[min_lay_name].append(r)
 
-        self.round_groups = dict(sorted(self.round_groups.items(), key=lambda item: self.names_lay.index(item[0])))
+        self.round_groups = dict(sorted(self.round_groups.items(), key=lambda item: (self.names_lay + ['golden']).index(item[0])))
 
     def _forward(self, spikes_in: Tensor, layer_start: str = None, layer_end: str = None) -> Iterator[Tensor]:
         s = torch.clone(spikes_in)
         has_started = not layer_start
 
         for lay_name in self.names_lay:
-            if lay_name == layer_end:
-                break
             has_started |= lay_name == layer_start
             if not has_started:
                 continue
 
             if not isinstance(self.layers[lay_name], snn.slayer._dropoutLayer):
-                with torch.no_grad():
-                    s = self.slayer.spike(self.slayer.psp(self.layers[lay_name](s)))
+                s = self.slayer.spike(self.slayer.psp(self.layers[lay_name](s)))
 
-            yield s
+            yield s  # Yield next layer's output
+
+            if lay_name == layer_end:
+                break
 
     def _register_hooks(self, round: FaultRound) -> list[RemovableHandle]:
         faults = round.search_neuronal()
@@ -367,7 +408,7 @@ class Campaign:
         self.show_progress()
 
     def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layer_names: Iterable[str] = None, error: snn.loss = None) -> None:
-        if not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
+        if layer_names is not None and not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
             raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
 
         self.rounds.clear()
@@ -417,7 +458,7 @@ class Progress:
         self.iter_num = batches_num * rounds_num
         self.fragment = 1. / self.iter_num
         self.start_time = time()
-        
+
         self._flush_lines_num = 0
 
     def __str__(self) -> str:
@@ -427,12 +468,12 @@ class Progress:
         s += f"{self.status * 100.:6.2f} %\t\n"
 
         self._flush_lines_num = s.count('\n') + 2
-        
+
         return s
+
+    def set_batch(self, b: int) -> None:
+        self.batch = b
 
     def step(self) -> None:
         self.status += self.fragment
         self.iter += 1
-    
-    def step_batch(self) -> None:
-        self.batch += 1
