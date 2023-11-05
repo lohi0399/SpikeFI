@@ -333,7 +333,7 @@ class Fault:
             self.add_site(s)
 
 
-class FaultRound(dict):
+class FaultRound(dict):  # dict[Tuple[str, FaultModel], Fault]
     def __init__(self, *args, **kwargs) -> None:
         self.stats = snn.utils.stats()
         if 'faults' in kwargs or (args and isinstance(args[0], Iterable) and all(isinstance(el, Fault) for el in args[0])):
