@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from typing import Any
+
 from torch import nn, Tensor
 
 from slayerSNN import slayer
@@ -51,24 +54,15 @@ class LayersInfo:
         self.shapes_neu[name] = tuple(output.shape[1:4])
         self.shapes_syn[name] = tuple(layer.weight.shape[0:4]) if has_weigths else None
 
-    def index(self, injectable_name: str) -> int:
-        is_inj = self.is_injectable(injectable_name)
-        if is_inj is None:
-            raise ValueError(f"No layer with name '{injectable_name}' found.")
-        if not is_inj:
-            raise ValueError(f"Layer '{injectable_name}' is not injectable. Only injectable layers support indexing.")
-
-        return self.order.index(injectable_name)
+    def index(self, name: str) -> int:
+        return self.order.index(name)
 
     def get_injectables(self) -> list[str]:
         return [inj[0] for inj in self.injectables.items() if inj[1]]
 
     def get_following(self, injectable_name: str) -> str | None:
         idx = self.index(injectable_name)
-        if idx < len(self) - 1:
-            return self.order[idx + 1]
-
-        return None
+        return self.order[idx + 1] if idx < len(self) - 1 else None
 
     def get_shapes(self, syn_select: bool, name: str) -> tuple[int, ...]:
         return self.shapes_syn[name] if syn_select else self.shapes_neu[name]
@@ -81,6 +75,12 @@ class LayersInfo:
 
     def is_output(self, name: str) -> bool:
         return name == self.order[-1]
+
+    def infer_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, tuple[Any, ...], Tensor], None]:
+        def infer_hook(layer: nn.Module, _, output: Tensor) -> None:
+            self.infer(layer_name, layer, output)
+
+        return infer_hook
 
     @staticmethod
     def is_module_injectable(layer: nn.Module) -> bool:
