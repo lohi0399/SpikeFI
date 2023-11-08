@@ -11,8 +11,9 @@ from torch.utils.data import DataLoader
 
 import slayerSNN as snn
 from slayerSNN.slayer import spikeLayer
+from slayerSNN.utils import stats as spikeStats
 
-from .fault import Fault, FaultModel, FaultRound, FaultSite
+from .fault import Fault, FaultModel, FaultRound, FaultSite, OptimizedFaultRound
 from .utils.layer import LayersInfo
 from .utils.progress import CampaignProgress, refresh_progress_job
 
@@ -32,8 +33,10 @@ class Campaign:
         self.layers_info = LayersInfo()
         self.infer_layers_info(shape_in)
 
-        self.rounds = [FaultRound()]
-        self.round_groups: dict[str, list[int]] = {}  # TODO: Remove?
+        self.rounds: list[FaultRound] = [FaultRound()]
+        self.orounds: list[OptimizedFaultRound] = []
+        self.rgroups: dict[str, list[int]] = {}
+        self.performance: list[spikeStats] = []
 
     def __repr__(self) -> str:
         s = 'FI Campaign:\n'
@@ -185,46 +188,56 @@ class Campaign:
 
         progr_thread.join()
 
-        self._post_run()
+        # Update fault rounds statistics
+        for stats in self.performance:
+            stats.update()
 
     def _pre_run(self) -> None:
         if not self.rounds:
             self.rounds = [FaultRound()]
 
+        # Clear fault rounds related collections
+        self.faulty.clear()
+        self.orounds.clear()
+        self.rgroups.clear()
+        self.performance.clear()
+
+        # FIXME: Memory issues for big number of rounds
+        #           -> Evaluate rounds in bunches?
+        #           -> Try to minimize GPU memory consumption
         for r, round in enumerate(self.rounds):
-            # Sort fault round's faults in ascending order of faults appearence (early faulty layer first)
-            round = self.rounds[r] = FaultRound(sorted(round.items(), key=lambda item: self.layers_info.index(item[0][0])))
-            early_lay_name = next(iter(round.keys()), (None,))[0] or 'golden'
+            # Create optimized fault rounds from rounds
+            oround = OptimizedFaultRound(round, self.layers_info)
+            self.orounds.append(oround)
+
+            # Store callable and layer for output if faulty
+            if oround.is_out_faulty:
+                # The callable does not use the output layer module, so it can be called with None as first argument
+                oround.out_neuron_callable = Campaign._neuron_pre_hook_wrapper(oround.search_neuronal(self.layers_info.order[-1]))
 
             # Group fault rounds per earliest faulty layer
-            self.round_groups.setdefault(early_lay_name, list())
-            self.round_groups[early_lay_name].append(r)
+            self.rgroups.setdefault(oround.early_name, list())
+            self.rgroups[oround.early_name].append(r)
 
-            # Create fault round's faulty network instance
-            self.faulty.append(self._perturb_net(round))
+            # Create faulty network instances for fault rounds
+            self.faulty.append(self._perturb_net(oround))
 
-        # Sort fault round goups in ascending order of groups earliest layer
-        self.round_groups = dict(sorted(self.round_groups.items(), key=lambda item: -1 if item[0] == 'golden' else self.layers_info.index(item[0])))
+            # Create statistics for fault rounds
+            self.performance.append(spikeStats())
+
+        # Sort fault round goups in ascending order of group earliest layer
+        self.rgroups = dict(sorted(self.rgroups.items(), key=lambda item: -1 if item[0] is None else self.layers_info.index(item[0])))
 
         # Assign optimized forward function to golden network
         self.golden.forward_opt = MethodType(Campaign._forward_opt_wrapper(self.layers_info, self.slayer), self.golden)
 
-    def _post_run(self) -> None:
-        # Update round statistics
-        for round in self.rounds:
-            round.stats.update()
-
-        # Destroy variables needed in run method
-        self.faulty.clear()
-        self.round_groups.clear()
-
-    def _perturb_net(self, sorted_round: FaultRound) -> nn.Module:
+    def _perturb_net(self, round: FaultRound) -> nn.Module:
         faulty = deepcopy(self.golden)
 
         for layer in self.layers_info.get_injectables():
-            neuronal = sorted_round.search_neuronal(layer)
-            parametric = sorted_round.search_parametric(layer)
-            synaptic = sorted_round.search_synaptic(layer)
+            neuronal = round.search_neuronal(layer)
+            parametric = round.search_parametric(layer)
+            synaptic = round.search_synaptic(layer)
 
             # Neuronal faults
             if neuronal:
@@ -262,20 +275,19 @@ class Campaign:
         return faulty
 
     @staticmethod
-    def _forward_opt_wrapper(layers_info: LayersInfo, slayer: spikeLayer) -> Callable[[Tensor, Optional[str], Optional[str]], Tensor]:
-        def forward_opt(self: nn.Module, spikes_in: Tensor, start_layer: str = None, end_layer: str = None) -> Tensor:
-            start_layer_idx = layers_info.index(start_layer) if start_layer else 0
-            end_layer_idx = layers_info.index(end_layer) if end_layer else len(layers_info) - 1
+    def _forward_opt_wrapper(layers_info: LayersInfo, slayer: spikeLayer) -> Callable[[Tensor, Optional[int], Optional[int]], Tensor]:
+        def forward_opt(self: nn.Module, spikes_in: Tensor, start_layer_idx: int = None, end_layer_idx: int = None) -> Tensor:
+            start_idx = 0 if start_layer_idx is None else start_layer_idx
+            end_idx = (len(layers_info) - 1) if end_layer_idx is None else end_layer_idx
+            subject_layers = [lay_name for lay_idx, lay_name in enumerate(layers_info.order)
+                              if start_idx <= lay_idx <= end_idx]
 
-            subject_layers = [lay for lay in layers_info.order
-                              if start_layer_idx <= layers_info.index(lay) <= end_layer_idx]
-
-            spikes = spikes_in
+            spikes = spikes_in.clone()
             for layer_name in subject_layers:
                 layer = getattr(self, layer_name)
                 spikes = layer(spikes)
                 if not isinstance(layer, snn.slayer._dropoutLayer):
-                    # Dropout layers are not useful in inference but they may have registered (pre-)hooks
+                    # Dropout layers are not useful in inference but they may have registered pre-hooks
                     spikes = slayer.spike(slayer.psp(spikes))
 
             return spikes
@@ -283,68 +295,43 @@ class Campaign:
         return forward_opt
 
     def _evaluate_single(self, test_loader: DataLoader, error: snn.loss = None) -> None:
-        round = self.rounds[0]
-        is_out_faulty = False
-
-        if round:
-            late_layer = list(round.keys())[-1][0]
-            is_out_faulty = self.layers_info.is_output(late_layer)
-
-            if is_out_faulty:
-                out_layer_name = self.layers_info.order[-1]
-                out_layer = getattr(self.faulty[0], out_layer_name)
-                out_neuron_callable = self._neuron_pre_hook_wrapper(round.search_neuronal(out_layer_name))
-
         for b, (input, target, label) in enumerate(test_loader):
-            output = self.faulty[0].forward(input.to(self.device))
-            if is_out_faulty:
-                out_neuron_callable(out_layer, (output,))
+            # Should not call default forward, as the order of spike-psp-layer is not guaranteed
+            output = self.faulty[0].forward_opt(input.to(self.device))
+            if self.orounds[0].is_out_faulty:
+                self.orounds[0].out_neuron_callable(None, (output,))
 
-            self._stats_step(round.stats, output, target, label, error)
+            self._advance_performance(self.performance[0], output, target, label, error)
 
             with self.progress_lock:
                 self.progress.step()
                 self.progress.set_batch(b)
 
     def _evaluate_optimized(self, test_loader: DataLoader, error: snn.loss = None) -> None:
-        out_lay_idx = len(self.layers_info.order) - 1
-        out_layer_name = self.layers_info.order[-1]
         for b, (input, target, label) in enumerate(test_loader):  # For each batch
             # Store golden spikes
             golden_spikes = [input.to(self.device)]
-            for layer_idx, layer_name in enumerate(self.layers_info.order):
-                golden_spikes.append(self.golden.forward_opt(golden_spikes[layer_idx], layer_name, layer_name))
+            for layer_idx in range(len(self.layers_info)):
+                golden_spikes.append(self.golden.forward_opt(golden_spikes[layer_idx], layer_idx, layer_idx))
 
-            # TODO: Check if round has no faults and return nominal spikes directly
-            for group_lay_name, round_group in self.round_groups.items():  # For each fault round group
-                group_lay_idx = self.layers_info.index(group_lay_name)
-                spikes_lay_in = golden_spikes[group_lay_idx]
-
+            for round_group in self.rgroups.values():  # For each fault round group
                 for r in round_group:  # For each fault round
-                    round = self.rounds[r]
                     faulty = self.faulty[r]
+                    oround = self.orounds[r]
 
-                    # TODO: Calculate once and store
-                    round_late_lay_name = list(round.keys())[-1][0]
-                    round_late_lay_idx = self.layers_info.index(round_late_lay_name)
-
-                    spikes_round_out = faulty.forward_opt(spikes_lay_in, group_lay_name, round_late_lay_name)
-
-                    # FIXME: Early stop optimization needs to compare with layer's output that follows the late layer
-                    if round_late_lay_idx != out_lay_idx:  # if not is_out_faulty
-                        # Early stop optimization
-                        early_stop = torch.equal(spikes_round_out, golden_spikes[round_late_lay_idx + 1])
-                        output = golden_spikes[-1] if early_stop else \
-                            faulty.forward(spikes_round_out, self.layers_info.get_following(round_late_lay_name))
+                    if oround:
+                        late_out = faulty.forward_opt(golden_spikes[oround.early_idx], oround.early_idx, oround.late_idx)
+                        if oround.is_out_faulty:
+                            output = oround.out_neuron_callable(None, (late_out,))
+                        else:
+                            # Early stop optimization
+                            late_next_out = faulty.forward_opt(late_out, oround.late_idx + 1, oround.late_idx + 1)
+                            early_stop = torch.equal(late_next_out, golden_spikes[oround.late_idx + 2])
+                            output = golden_spikes[-1] if early_stop else faulty.forward_opt(late_next_out, oround.late_idx + 2)
                     else:
-                        output = spikes_round_out
-                        # TODO: Calculate once and store
-                        out_neuron_callable = self._neuron_pre_hook_wrapper(round.search_neuronal(out_layer_name))
-                        out_layer = getattr(faulty, out_layer_name)
-                        out_neuron_callable(out_layer, (output,))
+                        output = golden_spikes[-1]
 
-                    # Testing stats
-                    self._stats_step(round.stats, output, target, label, error)
+                    self._advance_performance(self.performance[r], output, target, label, error)
 
                     with self.progress_lock:
                         self.progress.step()
@@ -352,7 +339,7 @@ class Campaign:
             with self.progress_lock:
                 self.progress.set_batch(b)
 
-    def _stats_step(self, stats: snn.utils.stats(), output: Tensor, target: Tensor, label: Tensor, error: snn.loss = None) -> None:
+    def _advance_performance(self, stats: spikeStats, output: Tensor, target: Tensor, label: Tensor, error: snn.loss = None) -> None:
         stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
         stats.testing.numSamples += len(label)
         if error:
@@ -379,18 +366,19 @@ class Campaign:
         self.run(test_loader, error)
 
     @staticmethod
-    def _neuron_pre_hook_wrapper(layer_neuron_faults: list[Fault]) -> Callable[[nn.Module, tuple[Any, ...]], None]:
-        def neuron_pre_hook(_, args: tuple[Any, ...]) -> None:
+    def _neuron_pre_hook_wrapper(layer_neuron_faults: list[Fault]) -> Callable[[nn.Module, tuple[Any, ...]], Tensor]:
+        def neuron_pre_hook(_, args: tuple[Any, ...]) -> Tensor:
             prev_spikes_out = args[0]
             for fault in layer_neuron_faults:
                 for site in fault.sites:
-                    # prev_spikes_out[site.unroll()] = fault.model.perturb(prev_spikes_out[site.unroll()], site)
-                    prev_spikes_out[site.unroll()] = -1
+                    prev_spikes_out[site.unroll()] = fault.model.perturb(prev_spikes_out[site.unroll()], site)
+
+            return prev_spikes_out
 
         return neuron_pre_hook
 
     @staticmethod
-    def _parametric_hook_wrapper(layer_param_faults: list[Fault]) -> Callable[[nn.Module, tuple[Any, ...]], None]:
+    def _parametric_hook_wrapper(layer_param_faults: list[Fault]) -> Callable[[nn.Module, tuple[Any, ...], Tensor], None]:
         def parametric_hook(_, __, spikes_out: Tensor) -> None:
             for fault in layer_param_faults:
                 flayer = fault.model.flayer

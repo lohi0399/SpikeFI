@@ -7,9 +7,9 @@ from operator import or_
 import torch
 from torch import Tensor
 
-import slayerSNN as snn
 from slayerSNN.slayer import spikeLayer
 
+from .utils.layer import LayersInfo
 from .utils.quantization import q2i_dtype, quant_args_from_range
 
 
@@ -335,7 +335,6 @@ class Fault:
 
 class FaultRound(dict):  # dict[Tuple[str, FaultModel], Fault]
     def __init__(self, *args, **kwargs) -> None:
-        self.stats = snn.utils.stats()
         if 'faults' in kwargs or (args and isinstance(args[0], Iterable) and all(isinstance(el, Fault) for el in args[0])):
             super().__init__()
             self.insert_many(kwargs.get('faults', args[0]))
@@ -410,3 +409,27 @@ class FaultRound(dict):  # dict[Tuple[str, FaultModel], Fault]
 
     def search_synaptic(self, layer_name: str = None) -> list[Fault]:
         return self.search(layer_name, FaultTarget.WEIGHT)
+
+    def optimized(self, layers_order: list[str]) -> 'OptimizedFaultRound':
+        return OptimizedFaultRound(self, layers_order)
+
+
+class OptimizedFaultRound(FaultRound):
+    def __init__(self, round: FaultRound, layers_info: LayersInfo) -> None:
+        # Sort round's faults in ascending order of faults appearence (early faulty layer first)
+        super().__init__(FaultRound(sorted(round.items(), key=lambda item: layers_info.index(item[0][0]))))
+
+        # Early and Late layers are the first and last ones to contain a fault, respectively
+        # For a single fault early and late layers are the same
+        round_iter = iter(self)
+        self.early_name = next(round_iter, (None,))[0]
+
+        self.late_name = self.early_name
+        for key in round_iter:
+            self.late_name = key[0]
+
+        self.early_idx = layers_info.index(self.early_name) if self.early_name else None
+        self.late_idx = layers_info.index(self.late_name) if self.late_name else None
+
+        self.is_out_faulty = any(layers_info.is_output(key[0]) for key in self)
+        self.out_neuron_callable = None
