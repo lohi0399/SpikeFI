@@ -65,6 +65,8 @@ class nmnistNetwork(torch.nn.Module):
         if w_dropout:
             s_out = self.SD1(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  #  8,  8, 64
+        # if w_dropout:
+        #     s_out = self.SD1(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 10
 
         return s_out

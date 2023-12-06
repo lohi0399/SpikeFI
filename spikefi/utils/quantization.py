@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import torch
 from torch import Tensor
 
@@ -19,7 +17,7 @@ def q2i_dtype(qdtype: torch.dtype) -> torch.dtype:
 
 
 def quant_args_from_range(xmin: float | Tensor, xmax: float | Tensor,
-                          dtype: torch.dtype) -> Tuple[Tensor, Tensor, torch.dtype]:
+                          dtype: torch.dtype) -> tuple[Tensor, Tensor, torch.dtype]:
     if not torch.is_tensor(xmin):
         xmin = torch.tensor(xmin)
     if not torch.is_tensor(xmax):

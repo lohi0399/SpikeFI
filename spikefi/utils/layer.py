@@ -13,7 +13,7 @@ class LayersInfo:
     def __init__(self) -> None:
         self.names: set[str] = set()
         self.order: list[str] = []
-        self.types: dict[str, str] = {}
+        self.types: dict[str, type] = {}
         self.injectables: dict[str, bool] = {}
         self.weightables: dict[str, bool] = {}
         self.shapes_neu: dict[str, tuple[int, int, int]] = {}
@@ -28,7 +28,7 @@ class LayersInfo:
             neu = "{:2d} x {:2d} x {:2d}".format(*self.shapes_neu[lay_name])
             syn = "{:2d} x {:2d} x {:2d} x {:2d}".format(*self.shapes_syn[lay_name]) if self.weightables[lay_name] else "-"
 
-            s += f"      #{lay_idx:2d}: '{lay_name}' - {self.types[lay_name]} - {'' if self.injectables[lay_name] else 'non '}injectable\n"
+            s += f"      #{lay_idx:2d}: '{lay_name}' - {self.types[lay_name].__name__} - {'' if self.injectables[lay_name] else 'non '}injectable\n"
             s += f"        Shapes: neurons {neu} | synapses {syn}\n"
         s += '}'
 
@@ -44,11 +44,11 @@ class LayersInfo:
             print('Cannot use an injectable layer more than once in the network.')
             return
 
-        has_weigths = isinstance(layer, nn.Conv3d) or isinstance(layer, nn.ConvTranspose3d)
+        has_weigths = isinstance(layer, (nn.Conv3d, nn.ConvTranspose3d))
 
         self.names.add(name)
         self.order.append(name)
-        self.types[name] = type(layer).__name__
+        self.types[name] = type(layer)
         self.injectables[name] = is_injectable
         self.weightables[name] = has_weigths
         self.shapes_neu[name] = tuple(output.shape[1:4])

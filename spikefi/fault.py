@@ -1,6 +1,7 @@
 from collections.abc import Callable, Iterable
 from copy import copy, deepcopy
 from enum import auto, Flag
+from math import log2
 from functools import reduce
 from operator import or_
 
@@ -53,13 +54,28 @@ class FaultSite:
 
 
 class FaultTarget(Flag):
-    OUTPUT = Z = auto()
-    WEIGHT = W = auto()
-    PARAMETER = P = auto()
+    OUTPUT = Z = auto()     # 1
+    WEIGHT = W = auto()     # 2
+    PARAMETER = P = auto()  # 4
 
     @classmethod
-    def all(cls):
+    def all(cls) -> 'FaultTarget':
         return reduce(or_, cls)
+
+    def get_index(self) -> int:
+        return int(log2(self.value))
+
+    @staticmethod
+    def neuronal() -> 'FaultTarget':
+        return FaultTarget.OUTPUT | FaultTarget.PARAMETER
+
+    @staticmethod
+    def parametric() -> 'FaultTarget':
+        return FaultTarget.PARAMETER
+
+    @staticmethod
+    def synaptic() -> 'FaultTarget':
+        return FaultTarget.WEIGHT
 
 
 class FaultModel:
@@ -69,8 +85,8 @@ class FaultModel:
         self.method = method
         self.args = args
 
-        self.original = {}
-        self.perturbed = {}
+        self.original: dict[FaultSite, float | Tensor] = {}
+        self.perturbed: dict[FaultSite, float | Tensor] = {}
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, FaultModel) and self._key() == other._key()
@@ -95,21 +111,20 @@ class FaultModel:
         return 'Custom' if name == FaultModel.__name__ else name
 
     def is_neuronal(self) -> bool:
-        return self.target in FaultTarget.PARAMETER | FaultTarget.OUTPUT
+        return self.target in FaultTarget.neuronal()
 
     def is_parametric(self) -> bool:
-        return self.target is FaultTarget.PARAMETER
+        return self.target in FaultTarget.parametric()
 
     def is_synaptic(self) -> bool:
-        return self.target is FaultTarget.WEIGHT
+        return self.target in FaultTarget.synaptic()
 
     def is_perturbed(self, site: FaultSite) -> bool:
         return site is not None and site in self.original and site in self.perturbed
 
     # Omitting the site means no restoration will be needed
     def perturb(self, original: float | Tensor, site: FaultSite, *new_args) -> float | Tensor:
-        args_ = new_args or self.args
-        perturbed = self.method(original, *args_)
+        perturbed = self.method(original, *(new_args or self.args))
 
         self.original[site] = original
         self.perturbed[site] = perturbed
@@ -117,9 +132,6 @@ class FaultModel:
         return perturbed
 
     def restore(self, site: FaultSite) -> float | Tensor:
-        if not self.is_perturbed(site):
-            return None
-
         self.perturbed.pop(site)
         return self.original.pop(site)
 
@@ -185,13 +197,11 @@ class ParametricFaultModel(FaultModel):
         self.flayer.neuron[self.param_name] = self.param_perturbed
 
     def param_restore(self) -> None:
-        tore = self.param_original
-
+        self.flayer.neuron[self.param_name] = self.param_original
         self.param_original = None
         self.param_perturbed = None
-        self.flayer = None
 
-        return tore
+        return self.flayer.neuron[self.param_name]
 
     def perturb(self, original: float | Tensor, site: FaultSite) -> float | Tensor:
         return super().perturb(original, site, self.args[0][site])
@@ -232,8 +242,8 @@ class BitflippedSynapse(FaultModel):
 class Fault:
     def __init__(self, model: FaultModel, sites: FaultSite | Iterable[FaultSite] = None, random_sites_num: int = 0) -> None:
         self.model = model
-        self.sites = set()
-        self.sites_pending = []
+        self.sites: set[FaultSite] = set()
+        self.sites_pending: list[FaultSite] = []
 
         if sites is None and not random_sites_num:
             return
@@ -333,13 +343,19 @@ class Fault:
             self.add_site(s)
 
 
-class FaultRound(dict):  # dict[Tuple[str, FaultModel], Fault]
+class FaultRound(dict):  # dict[tuple[str, FaultModel], Fault]
     def __init__(self, *args, **kwargs) -> None:
-        if 'faults' in kwargs or (args and isinstance(args[0], Iterable) and all(isinstance(el, Fault) for el in args[0])):
+        # Indicate faulty layers and their fault targets
+        self.fault_map: dict[str, list[bool]] = {}
+
+        # Construct from an Iterable of Faults
+        if 'faults' in kwargs or (bool(args) and isinstance(args[0], Iterable) and all(isinstance(el, Fault) for el in args[0])):
             super().__init__()
             self.insert_many(kwargs.get('faults', args[0]))
-        else:
-            super().__init__(*args, **kwargs)
+            return
+
+        # Construct from another dict
+        super().__init__(*args, **kwargs)
 
     def __repr__(self) -> str:
         return self._info(verbose=True)
@@ -354,6 +370,19 @@ class FaultRound(dict):  # dict[Tuple[str, FaultModel], Fault]
             s += f"\n  '{key[0]}': {sfunc(fault)}"
 
         return s + '\n}'
+
+    def any(self, layer_name: str, target: FaultTarget = FaultTarget.all()) -> bool:
+        layer_map = self.fault_map.get(layer_name, [False] * 3)
+        return any(layer_map[t.get_index()] for t in target)
+
+    def any_neuronal(self, layer_name: str) -> bool:
+        return self.any(layer_name, FaultTarget.neuronal())
+
+    def any_parametric(self, layer_name: str) -> bool:
+        return self.any(layer_name, FaultTarget.parametric())
+
+    def any_synaptic(self, layer_name: str) -> bool:
+        return self.any(layer_name, FaultTarget.synaptic())
 
     def extract(self, fault: Fault) -> None:
         if not fault:
@@ -385,6 +414,9 @@ class FaultRound(dict):  # dict[Tuple[str, FaultModel], Fault]
             self.setdefault(key, Fault(deepcopy(fault.model)))
             self[key].add_site(s)
 
+            self.fault_map.setdefault(s.layer, [False] * 3)
+            self.fault_map[s.layer][fault.model.target.get_index()] = True
+
     def insert_many(self, faults: Iterable[Fault]) -> None:
         if faults is None:
             return
@@ -394,30 +426,30 @@ class FaultRound(dict):  # dict[Tuple[str, FaultModel], Fault]
         for f in faults:
             self.insert(f)
 
-    def search(self, layer_name: str = None, target: FaultTarget = None) -> list[Fault]:
-        lay_keys = [k for k in self.keys() if k[0] == layer_name] if layer_name else self.keys()
-        if target and target != FaultTarget.all():
-            lay_keys = [k for k in lay_keys if k[1].target in target]
+    def search(self, layer_name: str, target: FaultTarget = FaultTarget.all()) -> list[Fault]:
+        return [self[k] for k in self if k[0] == layer_name and k[1].target in target]
 
-        return [self[k] for k in lay_keys]
+    def search_neuronal(self, layer_name: str) -> list[Fault]:
+        return self.search(layer_name, FaultTarget.neuronal())
 
-    def search_neuronal(self, layer_name: str = None) -> list[Fault]:
-        return self.search(layer_name, FaultTarget.OUTPUT | FaultTarget.PARAMETER)
+    def search_parametric(self, layer_name: str) -> list[Fault]:
+        return self.search(layer_name, FaultTarget.parametric())
 
-    def search_parametric(self, layer_name: str = None) -> list[Fault]:
-        return self.search(layer_name, FaultTarget.PARAMETER)
+    def search_synaptic(self, layer_name: str) -> list[Fault]:
+        return self.search(layer_name, FaultTarget.synaptic())
 
-    def search_synaptic(self, layer_name: str = None) -> list[Fault]:
-        return self.search(layer_name, FaultTarget.WEIGHT)
+    def optimized(self, layers_info: LayersInfo) -> 'OptimizedFaultRound':
+        oround = OptimizedFaultRound(self, layers_info)
+        oround.fault_map = deepcopy(self.fault_map)
 
-    def optimized(self, layers_order: list[str]) -> 'OptimizedFaultRound':
-        return OptimizedFaultRound(self, layers_order)
+        return oround
 
 
 class OptimizedFaultRound(FaultRound):
     def __init__(self, round: FaultRound, layers_info: LayersInfo) -> None:
         # Sort round's faults in ascending order of faults appearence (early faulty layer first)
         super().__init__(FaultRound(sorted(round.items(), key=lambda item: layers_info.index(item[0][0]))))
+        self.fault_map = dict(sorted(self.fault_map.items(), key=lambda item: layers_info.index(item[0])))
 
         # Early and Late layers are the first and last ones to contain a fault, respectively
         # For a single fault early and late layers are the same
@@ -432,4 +464,3 @@ class OptimizedFaultRound(FaultRound):
         self.late_idx = layers_info.index(self.late_name) if self.late_name else None
 
         self.is_out_faulty = any(layers_info.is_output(key[0]) for key in self)
-        self.out_neuron_callable = None
