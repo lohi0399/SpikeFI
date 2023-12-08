@@ -44,15 +44,15 @@ class LayersInfo:
             print('Cannot use an injectable layer more than once in the network.')
             return
 
-        has_weigths = isinstance(layer, (nn.Conv3d, nn.ConvTranspose3d))
+        has_weigth = hasattr(layer, 'weight')  # isinstance(layer, (nn.Conv3d, nn.ConvTranspose3d))
 
         self.names.add(name)
         self.order.append(name)
         self.types[name] = type(layer)
         self.injectables[name] = is_injectable
-        self.weightables[name] = has_weigths
+        self.weightables[name] = has_weigth
         self.shapes_neu[name] = tuple(output.shape[1:4])
-        self.shapes_syn[name] = tuple(layer.weight.shape[0:4]) if has_weigths else None
+        self.shapes_syn[name] = tuple(layer.weight.shape[0:4]) if has_weigth else None
 
     def index(self, name: str) -> int:
         return self.order.index(name)

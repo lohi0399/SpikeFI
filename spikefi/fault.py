@@ -122,11 +122,14 @@ class FaultModel:
     def is_perturbed(self, site: FaultSite) -> bool:
         return site is not None and site in self.original and site in self.perturbed
 
-    # Omitting the site means no restoration will be needed
-    def perturb(self, original: float | Tensor, site: FaultSite, *new_args) -> float | Tensor:
-        perturbed = self.method(original, *(new_args or self.args))
+    # The second argument is needed in order to be in accordance with the perturb method of ParametricFaultModel
+    def perturb(self, original: float | Tensor, _: FaultSite, *new_args) -> float | Tensor:
+        return self.method(original, *(new_args or self.args))
 
+    def perturb_store(self, original: float | Tensor, site: FaultSite) -> float | Tensor:
         self.original[site] = original
+
+        perturbed = self.perturb(original, site)
         self.perturbed[site] = perturbed
 
         return perturbed
@@ -204,7 +207,7 @@ class ParametricFaultModel(FaultModel):
         return self.flayer.neuron[self.param_name]
 
     def perturb(self, original: float | Tensor, site: FaultSite) -> float | Tensor:
-        return super().perturb(original, site, self.args[0][site])
+        return super().perturb(original, site, self.args[0].pop(site))
 
 
 # Neuron fault models
