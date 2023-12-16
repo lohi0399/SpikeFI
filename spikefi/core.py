@@ -280,7 +280,6 @@ class Campaign:
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
 
         for b, (input, target, label) in enumerate(test_loader):
-            # FIXME: Hooks attached on dropout layer are called multiple times if the layer is reused
             output = self.faulty(input.to(self.device))
             if is_out_faulty:
                 out_neuron_callable(None, (output,))
@@ -379,6 +378,8 @@ class Campaign:
     def _neuron_pre_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, tuple[Tensor, ...]], None]:
         def neuron_pre_hook(_, args: tuple[Tensor, ...]) -> None:
             prev_spikes_out = args[0]
+            if prev_spikes_out.shape[1:4] != self.layers_info.shapes_neu[layer_name]:
+                return
 
             for fault in self.orounds[self.r_idx].search_neuronal(layer_name):
                 for site in fault.sites:

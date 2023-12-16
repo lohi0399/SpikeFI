@@ -7,8 +7,8 @@ from slayerSNN import slayer
 
 
 class LayersInfo:
-    injectable_types = (slayer._convLayer, slayer._denseLayer)
-    unsupported_types = (slayer._pspLayer, slayer._pspFilter, slayer._delayLayer)
+    INJECTABLES = (slayer._convLayer, slayer._denseLayer)
+    UNSUPPORTED = (slayer._pspLayer, slayer._pspFilter, slayer._delayLayer)
 
     def __init__(self) -> None:
         self.names: set[str] = set()
@@ -33,6 +33,12 @@ class LayersInfo:
         s += '}'
 
         return s
+
+    def identify(self, shape: tuple[int, int, int]) -> str | None:
+        for n, s in self.shapes_neu.items():
+            if s == shape:
+                return n
+        return None
 
     def infer(self, name: str, layer: nn.Module, output: Tensor) -> None:
         if not LayersInfo.is_module_supported(layer):
@@ -85,7 +91,7 @@ class LayersInfo:
     @staticmethod
     def is_module_injectable(layer: nn.Module) -> bool:
         is_inj = False
-        for type_ in LayersInfo.injectable_types:
+        for type_ in LayersInfo.INJECTABLES:
             is_inj |= isinstance(layer, type_)
 
         return is_inj
@@ -93,7 +99,7 @@ class LayersInfo:
     @staticmethod
     def is_module_supported(layer: nn.Module) -> bool:
         is_sup = True
-        for type_ in LayersInfo.unsupported_types:
+        for type_ in LayersInfo.UNSUPPORTED:
             is_sup &= not isinstance(layer, type_)
 
         return is_sup
