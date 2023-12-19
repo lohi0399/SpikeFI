@@ -138,3 +138,9 @@ data/datasets
 
 # Examples output
 example/**/out
+
+# Output
+out/
+
+# Pickle files
+*.pkl

@@ -10,7 +10,8 @@ class LayersInfo:
     INJECTABLES = (slayer._convLayer, slayer._denseLayer)
     UNSUPPORTED = (slayer._pspLayer, slayer._pspFilter, slayer._delayLayer)
 
-    def __init__(self) -> None:
+    def __init__(self, shape_in: tuple[int, int, int]) -> None:
+        self.shape_in = shape_in
         self.names: set[str] = set()
         self.order: list[str] = []
         self.types: dict[str, type] = {}

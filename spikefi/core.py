@@ -1,9 +1,12 @@
 from collections.abc import Callable, Iterable
 from copy import deepcopy
+import os
+import pickle
 import random
 from threading import Lock, Thread
 from types import MethodType
 from typing import Optional
+from warnings import warn
 
 import torch
 from torch import nn, Tensor
@@ -21,9 +24,12 @@ from .utils.progress import CampaignProgress, refresh_progress_job
 
 # TODO: Fix long lines
 # TODO: Logging (in methods that might take a long time based on the rounds number, e.g., in _pre_run)
-# TODO: Results manipulation (read/write results in io.py and save/load results here)
 # TODO: Verify results validity
-# TODO: Parallelize fault rounds evaluation (?)
+# TODO: Compare GPU/memory performance of each faulty vs. the golden inference
+# TODO: Parallelize fault rounds evaluation
+
+
+VERSION = '1.0.0'
 
 
 class Campaign:
@@ -34,8 +40,8 @@ class Campaign:
         self.slayer = slayer
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        self.layers_info = LayersInfo()
-        self.infer_layers_info(shape_in)
+        self.layers_info = LayersInfo(shape_in)
+        self.infer_layers_info()
 
         # Assign optimized forward function to golden network
         self.golden.forward = MethodType(Campaign._forward_opt_wrapper(self.layers_info, self.slayer), self.golden)
@@ -59,14 +65,14 @@ class Campaign:
 
         return s
 
-    def infer_layers_info(self, shape_in: tuple[int, int, int]) -> None:
+    def infer_layers_info(self) -> None:
         handles = []
         for name, child in self.golden.named_children():
             hook = self.layers_info.infer_hook_wrapper(name)
             handle = child.register_forward_hook(hook)
             handles.append(handle)
 
-        dummy_input = torch.rand((1, *shape_in, 1)).to(self.device)
+        dummy_input = torch.rand((1, *self.layers_info.shape_in, 1)).to(self.device)
         self.golden(dummy_input)
 
         for handle in handles:
@@ -213,6 +219,11 @@ class Campaign:
         self.handles.clear()
         self.performance.clear()
 
+        # No need to remove the hook handles, as in each run a new copy of the golden net is created and used
+        # for handle in self.handles:
+        #     if isinstance(handle, RemovableHandle):
+        #         handle.remove()
+
         # Create faulty version of network
         self.faulty = deepcopy(self.golden)
         self.faulty.forward = MethodType(Campaign._forward_opt_wrapper(self.layers_info, self.slayer), self.faulty)
@@ -354,6 +365,38 @@ class Campaign:
 
         self.run(test_loader, error)
 
+    def export(self) -> 'CampaignData':
+        return CampaignData(VERSION, self)
+
+    def save(self, filepath: str = None) -> None:
+        filepath = CampaignData.make_filepath(filepath)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+        with open(filepath, 'wb') as pkl:
+            pickle.dump(self.export(), pkl)
+
+    @staticmethod
+    def from_object(data: 'CampaignData') -> 'Campaign':
+        campaign = Campaign(data.golden, data.layers_info.shape_in, data.slayer)
+        campaign.layers_info = data.layers_info
+        campaign.rounds = data.rounds
+        campaign.orounds = data.orounds
+        campaign.rgroups = data.rgroups
+        campaign.performance = data.performance
+
+        if data.version != VERSION:
+            warn('The loaded campaign object was created with a different version of the SpikeFI framework.', DeprecationWarning)
+
+        return campaign
+
+    @staticmethod
+    def load(filepath: str = None) -> 'Campaign':
+        filepath = CampaignData.make_filepath(filepath)
+        with open(filepath, 'rb') as pkl:
+            data = pickle.load(pkl)
+
+        return Campaign.from_object(data)
+
     @staticmethod
     def _forward_opt_wrapper(layers_info: LayersInfo, slayer: spikeLayer) -> Callable[[Tensor, Optional[int], Optional[int]], Tensor]:
         def forward_opt(self: nn.Module, spikes_in: Tensor, start_layer_idx: int = None, end_layer_idx: int = None) -> Tensor:
@@ -419,3 +462,32 @@ class Campaign:
                         layer.weight[site.unroll()] = fault.model.restore(site)
 
         return synaptic_hook
+
+
+class CampaignData:
+    def __init__(self, version: str, campaign: Campaign) -> None:
+        self.version = version
+        cmpn = deepcopy(campaign)
+
+        self.golden = cmpn.golden
+        self.slayer = cmpn.slayer
+        self.device = cmpn.device
+
+        self.layers_info = cmpn.layers_info
+
+        # Restore default forward function to golden network
+        self.golden.forward = MethodType(type(self.golden).forward, self.golden)
+
+        self.rounds = cmpn.rounds
+        self.orounds = cmpn.orounds
+        self.rgroups = cmpn.rgroups
+        self.performance = cmpn.performance
+
+    @staticmethod
+    def make_filepath(filepath: str = None, out_dir: str = 'out', out_fname: str = 'campaign.pkl') -> str:
+        if not filepath:
+            filepath = os.path.join(os.getcwd(), out_dir, out_fname)
+        elif os.path.isdir(filepath):
+            os.path.join(filepath, out_fname)
+
+        return filepath
