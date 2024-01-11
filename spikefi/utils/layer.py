@@ -20,6 +20,17 @@ class LayersInfo:
         self.shapes_neu: dict[str, tuple[int, int, int]] = {}
         self.shapes_syn: dict[str, tuple[int, int, int, int]] = {}
 
+    def __eq__(self, other: object) -> bool:
+        isEq = isinstance(other, LayersInfo)
+
+        isEq &= self.shape_in == other.shape_in
+        isEq &= self.order == other.order
+        isEq &= self.types == other.types
+        isEq &= self.shapes_neu == other.shapes_neu
+        isEq &= self.shapes_syn == other.shapes_syn
+
+        return isEq
+
     def __len__(self) -> int:
         return len(self.order)
 
