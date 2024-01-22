@@ -5,13 +5,11 @@ from math import log2
 from functools import reduce
 from operator import or_
 
-import torch
 from torch import Tensor
 
 from slayerSNN.slayer import spikeLayer
 
-from .utils.layer import LayersInfo
-from .utils.quantization import q2i_dtype, quant_args_from_range
+from spikefi.utils.layer import LayersInfo
 
 
 class FaultSite:
@@ -138,36 +136,11 @@ class FaultModel:
         self.perturbed.pop(site)
         return self.original.pop(site)
 
-    @staticmethod
-    def set_value(_, value: float | Tensor) -> float | Tensor:
-        return value
-
-    @staticmethod
-    def add_value(original: float | Tensor, value: float | Tensor) -> float | Tensor:
-        return original + value
-
-    @staticmethod
-    def mul_value(original: float | Tensor, value: float | Tensor) -> float | Tensor:
-        return original * value
-
-    @staticmethod
-    def qua_value(original: float | Tensor,
-                  scale: float | Tensor, zero_point: int | Tensor, dtype: torch.dtype) -> Tensor:
-        return torch.dequantize(torch.quantize_per_tensor(original, scale, zero_point, dtype))
-
-    @staticmethod
-    def bfl_value(original: float | Tensor, bit: int,
-                  scale: float | Tensor, zero_point: int | Tensor, dtype: torch.dtype) -> Tensor:
-        idt_info = torch.iinfo(q2i_dtype(dtype))
-        assert bit >= 0 and bit < idt_info.bits, 'Invalid bit position to flip'
-
-        q = torch.quantize_per_tensor(original, scale, zero_point, dtype)
-        return torch.dequantize(q ^ 2 ** bit)
-
 
 class ParametricFaultModel(FaultModel):
     def __init__(self, param_name: str, param_method: Callable[..., float | Tensor], *param_args) -> None:
-        super().__init__(FaultTarget.PARAMETER, FaultModel.set_value, dict())
+        super().__init__(FaultTarget.PARAMETER, lambda _, v: v, dict())
+        self.method.__name__ = 'set_value'
 
         self.param_name = param_name
         self.param_method = param_method
@@ -208,38 +181,6 @@ class ParametricFaultModel(FaultModel):
 
     def perturb(self, original: float | Tensor, site: FaultSite) -> float | Tensor:
         return super().perturb(original, site, self.args[0].pop(site))
-
-
-# Neuron fault models
-class DeadNeuron(FaultModel):
-    def __init__(self) -> None:
-        super().__init__(FaultTarget.OUTPUT, FaultModel.set_value, 0.)
-
-
-class SaturatedNeuron(FaultModel):
-    def __init__(self) -> None:
-        super().__init__(FaultTarget.OUTPUT, FaultModel.set_value, 1.)
-
-
-class ParametricNeuron(ParametricFaultModel):
-    def __init__(self, param_name: str, percentage: float) -> None:
-        super().__init__(param_name, FaultModel.mul_value, percentage)
-
-
-# Synapse fault models
-class DeadSynapse(FaultModel):
-    def __init__(self) -> None:
-        super().__init__(FaultTarget.WEIGHT, FaultModel.set_value, 0.)
-
-
-class SaturatedSynapse(FaultModel):
-    def __init__(self, satu: float) -> None:
-        super().__init__(FaultTarget.WEIGHT, FaultModel.set_value, satu)
-
-
-class BitflippedSynapse(FaultModel):
-    def __init__(self, bit: int, wmin: float, wmax: float, quant_dtype: torch.dtype) -> None:
-        super().__init__(FaultTarget.WEIGHT, FaultModel.bfl_value, bit, *quant_args_from_range(wmin, wmax, quant_dtype))
 
 
 class Fault:
@@ -448,6 +389,7 @@ class FaultRound(dict):  # dict[tuple[str, FaultModel], Fault]
         return oround
 
 
+# TODO: Optimize Fault Rounds on the go (each time a fault is inserted) ?
 class OptimizedFaultRound(FaultRound):
     def __init__(self, round: FaultRound, layers_info: LayersInfo) -> None:
         # Sort round's faults in ascending order of faults appearence (early faulty layer first)

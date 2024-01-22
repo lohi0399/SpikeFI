@@ -9,10 +9,9 @@ import pickle
 
 # TODO: Polish example script
 
-example_dir = os.path.dirname(__file__)
-net_params = snn.params(os.path.join(example_dir, 'nmnist.yaml'))
-test_only = True
-w_dropout = True
+net_params = snn.params('models/nmnist.yaml')
+to_train = True
+do_enable = True
 
 
 # Dataset definition
@@ -56,15 +55,15 @@ class nmnistNetwork(torch.nn.Module):
         self.SD1 = slayer.dropout(0.3)
 
     def forward(self, s_in):
-        s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 32, 32, 16
+        s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 16, 32, 32
         s_out = self.slayer.spike(self.slayer.psp(self.SP1(s_out)))  # 16, 16, 16
-        if w_dropout:
+        if do_enable:
             s_out = self.SD1(s_out)
-        s_out = self.slayer.spike(self.slayer.psp(self.SC2(s_out)))  # 16, 16, 32
-        s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  #  8,  8, 32
-        if w_dropout:
+        s_out = self.slayer.spike(self.slayer.psp(self.SC2(s_out)))  # 32, 16, 16
+        s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  # 32, 8,  8
+        if do_enable:
             s_out = self.SD1(s_out)
-        s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  #  8,  8, 64
+        s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  # 64, 8,  8
         # if w_dropout:
         #     s_out = self.SD1(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 10
@@ -99,15 +98,15 @@ if __name__ == '__main__':
 
     # Dataset and dataLoader instances.
     trainingSet = nmnistDataset(
-        datasetPath=os.path.join(example_dir, '../..', net_params['training']['path']['dir_train']),
-        sampleFile=os.path.join(example_dir, '../..', net_params['training']['path']['list_train']),
+        datasetPath=net_params['training']['path']['dir_train'],
+        sampleFile=net_params['training']['path']['list_train'],
         samplingTime=net_params['simulation']['Ts'],
         sampleLength=net_params['simulation']['tSample'])
     trainLoader = DataLoader(dataset=trainingSet, batch_size=12, shuffle=False, num_workers=4)
 
     testingSet = nmnistDataset(
-        datasetPath=os.path.join(example_dir, '../..', net_params['training']['path']['dir_test']),
-        sampleFile=os.path.join(example_dir, '../..', net_params['training']['path']['list_test']),
+        datasetPath=net_params['training']['path']['dir_test'],
+        sampleFile=net_params['training']['path']['list_test'],
         samplingTime=net_params['simulation']['Ts'],
         sampleLength=net_params['simulation']['tSample'])
     testLoader = DataLoader(dataset=testingSet, batch_size=12, shuffle=False, num_workers=4)
@@ -120,8 +119,8 @@ if __name__ == '__main__':
     #   input, target, label = trainingSet[i]
     #   snn.io.showTD(snn.io.spikeArrayToEvent(input.reshape((2, 34, 34, -1)).cpu().data.numpy()))
 
-    if test_only:
-        net = torch.load(os.path.join(example_dir, f"out/nmnist{'_do' if w_dropout else ''}.pt"))
+    if not to_train:
+        net = torch.load(f"out/net/nmnist{'-do' if do_enable else ''}_net.pt")
 
         # Testing loop.
         for i, (input, target, label) in enumerate(testLoader, 0):
@@ -143,6 +142,7 @@ if __name__ == '__main__':
         exit()
 
     # training loop
+    print('NMNIST Network')
     for epoch in range(100):
         tSt = datetime.now()
 
@@ -196,11 +196,11 @@ if __name__ == '__main__':
         stats.update()
 
     # Save trained network.
-    os.makedirs(os.path.join(example_dir, 'out'), exist_ok=True)
-    torch.save(net, os.path.join(example_dir, f"out/nmnist{'_do' if w_dropout else ''}.pt"))
+    os.makedirs('out/net', exist_ok=True)
+    torch.save(net, f"out/net/nmnist{'-do' if do_enable else ''}_net.pt")
 
     # Save statistics
-    with open(os.path.join(example_dir, f"out/nmnist{'_do' if w_dropout else ''}.pkl"), 'wb') as stats_file:
+    with open(f"out/net/nmnist{'-do' if do_enable else ''}_stats.pkl", 'wb') as stats_file:
         pickle.dump(stats, stats_file)
 
     # Plot the results.
@@ -210,6 +210,7 @@ if __name__ == '__main__':
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
+    plt.savefig('out/net/nmnist_train_loss.png')
 
     plt.figure(2)
     plt.plot(stats.training.accuracyLog, label='Training')
@@ -217,5 +218,4 @@ if __name__ == '__main__':
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
     plt.legend()
-
-    plt.show()
+    plt.savefig('out/net/nmnist_train_accu.png')

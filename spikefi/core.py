@@ -1,6 +1,5 @@
 from collections.abc import Callable, Iterable
 from copy import deepcopy
-import os
 import pickle
 import random
 from threading import Lock, Thread
@@ -17,9 +16,10 @@ import slayerSNN as snn
 from slayerSNN.slayer import spikeLayer
 from slayerSNN.utils import stats as spikeStats
 
-from .fault import Fault, FaultModel, FaultRound, FaultSite, FaultTarget, OptimizedFaultRound
-from .utils.layer import LayersInfo
-from .utils.progress import CampaignProgress, refresh_progress_job
+import spikefi.fault as ff
+from spikefi.utils.io import make_out_filepath
+from spikefi.utils.layer import LayersInfo
+from spikefi.utils.progress import CampaignProgress, refresh_progress_job
 
 
 # TODO: Fix long lines
@@ -47,8 +47,8 @@ class Campaign:
         self.golden.forward = MethodType(Campaign._forward_opt_wrapper(self.layers_info, self.slayer), self.golden)
 
         self.r_idx = 0
-        self.rounds: list[FaultRound] = [FaultRound()]
-        self.orounds: list[OptimizedFaultRound] = []
+        self.rounds: list[ff.FaultRound] = [ff.FaultRound()]
+        self.orounds: list[ff.OptimizedFaultRound] = []
         self.rgroups: dict[str, list[int]] = {}
         self.handles: dict[str, list[list[RemovableHandle]]] = {}
         self.performance: list[spikeStats] = []
@@ -78,7 +78,7 @@ class Campaign:
         for handle in handles:
             handle.remove()
 
-    def inject(self, faults: Iterable[Fault], round_idx: int = -1) -> list[Fault]:
+    def inject(self, faults: Iterable[ff.Fault], round_idx: int = -1) -> list[ff.Fault]:
         assert -len(self.rounds) <= round_idx < len(self.rounds), f'Invalid round index {round_idx}'
 
         self.define_random(faults)
@@ -88,7 +88,7 @@ class Campaign:
 
         return inj_faults
 
-    def define_random(self, faults: Iterable[Fault]) -> Iterable[Fault]:
+    def define_random(self, faults: Iterable[ff.Fault]) -> Iterable[ff.Fault]:
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
@@ -121,7 +121,7 @@ class Campaign:
 
         return faults
 
-    def validate(self, faults: Iterable[Fault]) -> list[Fault]:
+    def validate(self, faults: Iterable[ff.Fault]) -> list[ff.Fault]:
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
@@ -155,11 +155,11 @@ class Campaign:
 
         return valid_faults
 
-    def then_inject(self, faults: Iterable[Fault]) -> list[Fault]:
-        self.rounds.append(FaultRound())
+    def then_inject(self, faults: Iterable[ff.Fault]) -> list[ff.Fault]:
+        self.rounds.append(ff.FaultRound())
         return self.inject(faults, -1)
 
-    def eject(self, faults: Iterable[Fault] = None, round_idx: int = None) -> None:
+    def eject(self, faults: Iterable[ff.Fault] = None, round_idx: int = None) -> None:
         if faults is not None and not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
@@ -184,7 +184,7 @@ class Campaign:
                 self.rounds.clear()
 
         if not self.rounds:
-            self.rounds.append(FaultRound())
+            self.rounds.append(ff.FaultRound())
 
     def run(self, test_loader: DataLoader, error: snn.loss = None) -> None:
         self._pre_run()
@@ -203,6 +203,7 @@ class Campaign:
                 self._evaluate_optimized(test_loader, error)
 
         progress_thread.join()
+        del self.progress_lock
 
         # Update fault rounds statistics
         for stats in self.performance:
@@ -210,7 +211,7 @@ class Campaign:
 
     def _pre_run(self) -> None:
         if not self.rounds:
-            self.rounds = [FaultRound()]
+            self.rounds = [ff.FaultRound()]
 
         # Reset fault round variables
         self.r_idx = 0
@@ -246,10 +247,10 @@ class Campaign:
         # Sort fault round goups in ascending order of group earliest layer
         self.rgroups = dict(sorted(self.rgroups.items(), key=lambda item: -1 if item[0] is None else self.layers_info.index(item[0])))
 
-    def _perturb_net(self, round: FaultRound) -> None:
-        ind_neu = FaultTarget.Z.get_index()  # 0
-        ind_par = FaultTarget.P.get_index()  # 2
-        ind_syn = FaultTarget.W.get_index()  # 1
+    def _perturb_net(self, round: ff.FaultRound) -> None:
+        ind_neu = ff.FaultTarget.Z.get_index()  # 0
+        ind_par = ff.FaultTarget.P.get_index()  # 2
+        ind_syn = ff.FaultTarget.W.get_index()  # 1
 
         for layer_name in self.layers_info.get_injectables():
             self.handles.setdefault(layer_name, [[None] * 2 for _ in range(3)])
@@ -341,7 +342,7 @@ class Campaign:
         if error:
             stats.testing.lossSum += error.numSpikes(output, target.to(self.device)).cpu().item()
 
-    def run_complete(self, test_loader: DataLoader, fault_model: FaultModel, layer_names: Iterable[str] = None, error: snn.loss = None) -> None:
+    def run_complete(self, test_loader: DataLoader, fault_model: ff.FaultModel, layer_names: Iterable[str] = None, error: snn.loss = None) -> None:
         if layer_names is not None and not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
             raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
 
@@ -361,7 +362,7 @@ class Campaign:
                     for m in range(lay_shape[1 + is_syn]):
                         for n in range(lay_shape[2 + is_syn]):
                             self.then_inject(
-                                [Fault(fault_model, FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
+                                [ff.Fault(fault_model, ff.FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
 
         self.run(test_loader, error)
 
@@ -369,33 +370,11 @@ class Campaign:
         return CampaignData(VERSION, self)
 
     def save(self, filepath: str = None) -> None:
-        filepath = CampaignData.make_filepath(filepath)
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-
-        with open(filepath, 'wb') as pkl:
-            pickle.dump(self.export(), pkl)
-
-    @staticmethod
-    def from_object(data: 'CampaignData') -> 'Campaign':
-        campaign = Campaign(data.golden, data.layers_info.shape_in, data.slayer)
-        campaign.layers_info = data.layers_info
-        campaign.rounds = data.rounds
-        campaign.orounds = data.orounds
-        campaign.rgroups = data.rgroups
-        campaign.performance = data.performance
-
-        if data.version != VERSION:
-            warn('The loaded campaign object was created with a different version of the SpikeFI framework.', DeprecationWarning)
-
-        return campaign
+        self.export().save(filepath)
 
     @staticmethod
     def load(filepath: str = None) -> 'Campaign':
-        filepath = CampaignData.make_filepath(filepath)
-        with open(filepath, 'rb') as pkl:
-            data = pickle.load(pkl)
-
-        return Campaign.from_object(data)
+        return CampaignData.load(filepath).build()
 
     @staticmethod
     def _forward_opt_wrapper(layers_info: LayersInfo, slayer: spikeLayer) -> Callable[[Tensor, Optional[int], Optional[int]], Tensor]:
@@ -483,11 +462,24 @@ class CampaignData:
         self.rgroups = cmpn.rgroups
         self.performance = cmpn.performance
 
-    @staticmethod
-    def make_filepath(filepath: str = None, out_dir: str = 'out', out_fname: str = 'campaign.pkl') -> str:
-        if not filepath:
-            filepath = os.path.join(os.getcwd(), out_dir, out_fname)
-        elif os.path.isdir(filepath):
-            os.path.join(filepath, out_fname)
+    def build(self) -> Campaign:
+        campaign = Campaign(self.golden, self.layers_info.shape_in, self.slayer)
+        campaign.layers_info = self.layers_info
+        campaign.rounds = self.rounds
+        campaign.orounds = self.orounds
+        campaign.rgroups = self.rgroups
+        campaign.performance = self.performance
 
-        return filepath
+        if self.version != VERSION:
+            warn('The loaded campaign object was created with a different version of the SpikeFI framework.', DeprecationWarning)
+
+        return campaign
+
+    def save(self, fname: str = None) -> None:
+        with open(fname or make_out_filepath('campaign.pkl'), 'wb') as pkl:
+            pickle.dump(self, pkl)
+
+    @staticmethod
+    def load(fname: str = None) -> 'CampaignData':
+        with open(fname or make_out_filepath('campaign.pkl'), 'rb') as pkl:
+            return pickle.load(pkl)
