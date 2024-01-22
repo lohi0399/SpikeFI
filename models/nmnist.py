@@ -1,60 +1,36 @@
-from datetime import datetime
-import numpy as np
-import matplotlib.pyplot as plt
 import torch
-from torch.utils.data import Dataset, DataLoader
+
 import slayerSNN as snn
-import os
-import pickle
 
-# TODO: Polish example script
-
-net_params = snn.params('models/nmnist.yaml')
-to_train = True
-do_enable = True
+from models.neuromorphic import NDataset, NNetwork
 
 
-# Dataset definition
-class nmnistDataset(Dataset):
-    def __init__(self, datasetPath, sampleFile, samplingTime, sampleLength):
-        self.path = datasetPath
-        self.samples = np.loadtxt(sampleFile).astype('int')
-        self.samplingTime = samplingTime
-        self.nTimeBins = int(sampleLength / samplingTime)
-
+class NMNISTDataset(NDataset):
     def __getitem__(self, index):
-        inputIndex = self.samples[index, 0]
-        classLabel = self.samples[index, 1]
+        input_index = int(self.samples[index, 0])
+        class_label = int(self.samples[index, 1])
 
-        inputSpikes = snn.io.read2Dspikes(
-                        self.path + str(inputIndex.item()) + '.bs2'
-                        ).toSpikeTensor(torch.zeros((2, 34, 34, self.nTimeBins)),
-                                        samplingTime=self.samplingTime)
-        desiredClass = torch.zeros((10, 1, 1, 1))
-        desiredClass[classLabel, ...] = 1
-        return inputSpikes, desiredClass, classLabel
+        spikes_in = snn.io.read2Dspikes(f"{self.path}{input_index}.bs2") \
+            .toSpikeTensor(torch.zeros((2, 34, 34, self.n_time_bins)), self.sampling_time)
+        desired_class = torch.zeros((10, 1, 1, 1))
+        desired_class[class_label, ...] = 1
 
-    def __len__(self):
-        return self.samples.shape[0]
+        return spikes_in, desired_class, class_label
 
 
-# Network definition
-class nmnistNetwork(torch.nn.Module):
-    def __init__(self, net_params):
-        super(nmnistNetwork, self).__init__()
-        # initialize slayer
-        slayer = snn.layer(net_params['neuron'], net_params['simulation'])
-        self.slayer = slayer
-        # define network functions
-        self.SC1 = slayer.conv(2, 16, 5, padding=1)
-        self.SC2 = slayer.conv(16, 32, 3, padding=1)
-        self.SC3 = slayer.conv(32, 64, 3, padding=1)
-        self.SP1 = slayer.pool(2)
-        self.SP2 = slayer.pool(2)
-        self.SF1 = slayer.dense((8, 8, 64), 10)
-        self.SD1 = slayer.dropout(0.3)
+class NMNISTNetwork(NNetwork):
+    def __init__(self, net_params: snn.params):
+        super(NMNISTNetwork, self).__init__(net_params)
 
-    def forward(self, s_in):
+        self.SC1 = self.slayer.conv(2, 16, 5, padding=1)
+        self.SC2 = self.slayer.conv(16, 32, 3, padding=1)
+        self.SC3 = self.slayer.conv(32, 64, 3, padding=1)
+        self.SP1 = self.slayer.pool(2)
+        self.SP2 = self.slayer.pool(2)
+        self.SF1 = self.slayer.dense((8, 8, 64), 10)
+        self.SD1 = self.slayer.dropout(0.3)
+
+    def forward(self, s_in, do_enable=False):
         s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 16, 32, 32
         s_out = self.slayer.spike(self.slayer.psp(self.SP1(s_out)))  # 16, 16, 16
         if do_enable:
@@ -64,158 +40,46 @@ class nmnistNetwork(torch.nn.Module):
         if do_enable:
             s_out = self.SD1(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  # 64, 8,  8
-        # if w_dropout:
-        #     s_out = self.SD1(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 10
 
         return s_out
 
 
-if __name__ == '__main__':
-    # # Extract NMNIST samples
-    # import os
-    # with zipfile.ZipFile('NMNISTsmall.zip') as zip_file:
-    #     for member in zip_file.namelist():
-    #         if not os.path.exists('./' + member):
-    #             zip_file.extract(member, './')
+class LeNetNetwork(NNetwork):
+    def __init__(self, net_params: snn.params):
+        super(LeNetNetwork, self).__init__(net_params)
 
-    # Define the cuda device to run the code on.
-    device = torch.device('cuda')
-    # Use multiple GPU's if available
-    # device = torch.device('cuda:2') # should be the first GPU of deviceIDs
-    # deviceIds = [2, 3, 1]
+        self.SC1 = self.slayer.conv(2, 6, 7)
+        self.SC2 = self.slayer.conv(6, 16, 5)
+        self.SC3 = self.slayer.conv(16, 120, 5)
 
-    # Create network instance.
-    net = nmnistNetwork(net_params).to(device)
-    # Split the network to run over multiple GPUs
-    # net = torch.nn.DataParallel(Network(net_params).to(device), device_ids=deviceIds)
+        self.SP1 = self.slayer.pool(2)
+        self.SP2 = self.slayer.pool(2)
 
-    # Create snn loss instance.
-    error = snn.loss(net_params).to(device)
+        self.SF1 = self.slayer.dense(120, 84)
+        self.SF2 = self.slayer.dense(84, 10)
 
-    # Define optimizer module.
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
+        self.SDC = self.slayer.dropout(0.5)
+        self.SDF = self.slayer.dropout(0.25)
 
-    # Dataset and dataLoader instances.
-    trainingSet = nmnistDataset(
-        datasetPath=net_params['training']['path']['dir_train'],
-        sampleFile=net_params['training']['path']['list_train'],
-        samplingTime=net_params['simulation']['Ts'],
-        sampleLength=net_params['simulation']['tSample'])
-    trainLoader = DataLoader(dataset=trainingSet, batch_size=12, shuffle=False, num_workers=4)
+    def forward(self, s_in, do_enable=False):
+        s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 6, 28, 28
+        if do_enable:
+            s_out = self.SDC(s_out)
+        s_out = self.slayer.spike(self.slayer.psp(self.SP1(s_out)))  # 6, 14, 14
 
-    testingSet = nmnistDataset(
-        datasetPath=net_params['training']['path']['dir_test'],
-        sampleFile=net_params['training']['path']['list_test'],
-        samplingTime=net_params['simulation']['Ts'],
-        sampleLength=net_params['simulation']['tSample'])
-    testLoader = DataLoader(dataset=testingSet, batch_size=12, shuffle=False, num_workers=4)
+        s_out = self.slayer.spike(self.slayer.psp(self.SC2(s_out)))  # 16, 10, 10
+        if do_enable:
+            s_out = self.SDC(s_out)
+        s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  # 16,  5,  5
 
-    # Learning stats instance.
-    stats = snn.utils.stats()
+        s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  # 120, 1, 1
+        if do_enable:
+            s_out = self.SDC(s_out)
 
-    # # Visualize the network.
-    # for i in range(5):
-    #   input, target, label = trainingSet[i]
-    #   snn.io.showTD(snn.io.spikeArrayToEvent(input.reshape((2, 34, 34, -1)).cpu().data.numpy()))
+        s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 84
+        if do_enable:
+            s_out = self.SDF(s_out)
+        s_out = self.slayer.spike(self.slayer.psp(self.SF2(s_out)))  # 10
 
-    if not to_train:
-        net = torch.load(f"out/net/nmnist{'-do' if do_enable else ''}_net.pt")
-
-        # Testing loop.
-        for i, (input, target, label) in enumerate(testLoader, 0):
-            input = input.to(device)
-            target = target.to(device)
-
-            output = net.forward(input)
-
-            stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
-            stats.testing.numSamples += len(label)
-
-            loss = error.numSpikes(output, target)
-            stats.testing.lossSum += loss.cpu().data.item()
-            stats.print(0, i)
-
-        # Update stats.
-        stats.update()
-
-        exit()
-
-    # training loop
-    print('NMNIST Network')
-    for epoch in range(100):
-        tSt = datetime.now()
-
-        # Training loop.
-        for i, (input, target, label) in enumerate(trainLoader, 0):
-            # Move the input and target to correct GPU.
-            input = input.to(device)
-            target = target.to(device)
-
-            # Forward pass of the network.
-            output = net.forward(input)
-
-            # Gather the training stats.
-            stats.training.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
-            stats.training.numSamples += len(label)
-
-            # Calculate loss.
-            loss = error.numSpikes(output, target)
-
-            # Reset gradients to zero.
-            optimizer.zero_grad()
-
-            # Backward pass of the network.
-            loss.backward()
-
-            # Update weights.
-            optimizer.step()
-
-            # Gather training loss stats.
-            stats.training.lossSum += loss.cpu().data.item()
-
-            # Display training stats.
-            stats.print(epoch, i, (datetime.now() - tSt).total_seconds())
-
-        # Testing loop.
-        # Same steps as Training loops except loss backpropagation and weight update.
-        for i, (input, target, label) in enumerate(testLoader, 0):
-            input = input.to(device)
-            target = target.to(device)
-
-            output = net.forward(input)
-
-            stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
-            stats.testing.numSamples += len(label)
-
-            loss = error.numSpikes(output, target)
-            stats.testing.lossSum += loss.cpu().data.item()
-            stats.print(epoch, i)
-
-        # Update stats.
-        stats.update()
-
-    # Save trained network.
-    os.makedirs('out/net', exist_ok=True)
-    torch.save(net, f"out/net/nmnist{'-do' if do_enable else ''}_net.pt")
-
-    # Save statistics
-    with open(f"out/net/nmnist{'-do' if do_enable else ''}_stats.pkl", 'wb') as stats_file:
-        pickle.dump(stats, stats_file)
-
-    # Plot the results.
-    plt.figure(1)
-    plt.semilogy(stats.training.lossLog, label='Training')
-    plt.semilogy(stats.testing .lossLog, label='Testing')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.savefig('out/net/nmnist_train_loss.png')
-
-    plt.figure(2)
-    plt.plot(stats.training.accuracyLog, label='Training')
-    plt.plot(stats.testing .accuracyLog, label='Testing')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.legend()
-    plt.savefig('out/net/nmnist_train_accu.png')
+        return s_out
