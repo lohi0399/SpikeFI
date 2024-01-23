@@ -4,13 +4,13 @@ from torch.utils.data import DataLoader
 import slayerSNN as snn
 
 import spikefi as sfi
-from example.nmnist_cnn.nmnist import nmnistDataset, nmnistNetwork  # noqa - Package needed to load network
+import example as cs
 
-net: torch.nn.Module = torch.load('example/nmnist_cnn/out/nmnist_do.pt')
+net: torch.nn.Module = torch.load(f"{cs.out_dir}/{cs.case_study}{'-do' if cs.do_enable else ''}.pt")
 net.eval()
-net_params = snn.params('example/nmnist_cnn/nmnist.yaml')
+net_params = snn.params(f'example/config/{cs.fyamlname}.yaml')
 
-testing_set = nmnistDataset(
+testing_set = cs.CSDataset(
     datasetPath=net_params['training']['path']['dir_test'],
     sampleFile=net_params['training']['path']['list_test'],
     samplingTime=net_params['simulation']['Ts'],

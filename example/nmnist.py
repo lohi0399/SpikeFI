@@ -2,7 +2,7 @@ import torch
 
 import slayerSNN as snn
 
-from models.neuromorphic import NDataset, NNetwork
+from example.neuromorphic import NDataset, NNetwork
 
 
 class NMNISTDataset(NDataset):
@@ -25,21 +25,28 @@ class NMNISTNetwork(NNetwork):
         self.SC1 = self.slayer.conv(2, 16, 5, padding=1)
         self.SC2 = self.slayer.conv(16, 32, 3, padding=1)
         self.SC3 = self.slayer.conv(32, 64, 3, padding=1)
+
         self.SP1 = self.slayer.pool(2)
         self.SP2 = self.slayer.pool(2)
+
         self.SF1 = self.slayer.dense((8, 8, 64), 10)
-        self.SD1 = self.slayer.dropout(0.3)
+
+        self.SDC = self.slayer.dropout(0.3)
 
     def forward(self, s_in, do_enable=False):
         s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 16, 32, 32
+        if do_enable:
+            s_out = self.SDC(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SP1(s_out)))  # 16, 16, 16
-        if do_enable:
-            s_out = self.SD1(s_out)
+
         s_out = self.slayer.spike(self.slayer.psp(self.SC2(s_out)))  # 32, 16, 16
-        s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  # 32, 8,  8
         if do_enable:
-            s_out = self.SD1(s_out)
+            s_out = self.SDC(s_out)
+        s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  # 32, 8,  8
+
         s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  # 64, 8,  8
+        if do_enable:
+            s_out = self.SDC(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 10
 
         return s_out

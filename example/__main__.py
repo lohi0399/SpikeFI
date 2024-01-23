@@ -7,65 +7,46 @@ from torch.utils.data import DataLoader
 
 import slayerSNN as snn
 
-
-# Configuration parameters (modify depending on application)
-case_study = 'nmnist-lenet'
-to_train = True
-do_enable = False
-epochs = 100
-
-# To work on a new case study:
-#   - Add its name in the list
-#   - Make a new import case
-
-assert case_study in ['nmnist-deep', 'nmnist-lenet', 'gesture'], \
-    f'Case study {case_study} value is not valid. Please import it.'
-
-# Case study imports
-if 'nmnist' in case_study:
-    yaml_file = 'nmnist'
-    from models.nmnist import NMNISTDataset as CSDataset
-
-    if case_study == 'nmnist-deep':
-        from models.nmnist import NMNISTNetwork as CSNetwork
-    elif case_study == 'nmnist-lenet':
-        from models.nmnist import LeNetNetwork as CSNetwork
-
-# No modifications needed after this line
-# ---------------------------------------
+import example as cs
 
 # Generalized network/dataset initialization
 device = torch.device('cuda')
-net_params = snn.params(f'models/config/{yaml_file}.yaml')
-net = CSNetwork(net_params).to(device)
+net_params = snn.params(f'example/config/{cs.fyamlname}.yaml')
+net = cs.CSNetwork(net_params).to(device)
 
 error = snn.loss(net_params).to(device)
 optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
 stats = snn.utils.stats()
 
-trainingSet = CSDataset(
+trainingSet = cs.CSDataset(
     data_path=net_params['training']['path']['dir_train'],
     samples_file=net_params['training']['path']['list_train'],
     sampling_time=net_params['simulation']['Ts'],
     sample_length=net_params['simulation']['tSample'])
 trainLoader = DataLoader(dataset=trainingSet, batch_size=12, shuffle=False, num_workers=4)
 
-testingSet = CSDataset(
+testingSet = cs.CSDataset(
     data_path=net_params['training']['path']['dir_test'],
     samples_file=net_params['training']['path']['list_test'],
     sampling_time=net_params['simulation']['Ts'],
     sample_length=net_params['simulation']['tSample'])
 testLoader = DataLoader(dataset=testingSet, batch_size=12, shuffle=False, num_workers=4)
 
+base_fname = f"{cs.case_study}{'-do' if cs.do_enable else ''}"
+trial = str(len([f for f in os.listdir(cs.out_dir) if base_fname in f and f.endswith('.pt')]) or '')
+fnetname = f"{base_fname}_net{trial}.pt"
+fstaname = f"{base_fname}_stats{trial}.pkl"
+ffigname = f"{base_fname}_train{trial}.svg"
+
 # Testing (without re.training)
-if not to_train:
-    net = torch.load(f"out/net/{case_study}{'-do' if do_enable else ''}_net.pt")
+if not cs.to_train:
+    net = torch.load(f"out/net/{cs.case_study}{'-do' if cs.do_enable else ''}_net.pt")
 
     for i, (input, target, label) in enumerate(testLoader, 0):
         input = input.to(device)
         target = target.to(device)
 
-        output = net.forward(input, do_enable)
+        output = net.forward(input, cs.do_enable)
 
         stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
         stats.testing.numSamples += len(label)
@@ -79,17 +60,17 @@ if not to_train:
     exit(0)
 
 # Training
-print(case_study + ":")
+print(cs.case_study + ":")
 os.makedirs('out/net', exist_ok=True)
 
-for epoch in range(epochs):
+for epoch in range(cs.epochs):
     tSt = datetime.now()
 
     for i, (input, target, label) in enumerate(trainLoader, 0):
         input = input.to(device)
         target = target.to(device)
 
-        output = net.forward(input, do_enable)
+        output = net.forward(input, cs.do_enable)
 
         stats.training.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
         stats.training.numSamples += len(label)
@@ -108,7 +89,7 @@ for epoch in range(epochs):
         input = input.to(device)
         target = target.to(device)
 
-        output = net.forward(input, do_enable)
+        output = net.forward(input, cs.do_enable)
 
         stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
         stats.testing.numSamples += len(label)
@@ -117,14 +98,14 @@ for epoch in range(epochs):
         stats.testing.lossSum += loss.cpu().data.item()
         stats.print(epoch, i)
 
-        # Save trained network (based on the best testing accuracy)
-        if stats.testing.bestAccuracy:
-            torch.save(net, f"out/net/{case_study}{'-do' if do_enable else ''}_net.pt")
-
     stats.update()
 
+    # Save trained network (based on the best testing accuracy)
+    if stats.testing.accuracyLog[-1] == stats.testing.maxAccuracy:
+        torch.save(net, os.path.join(cs.out_dir, fnetname))
+
 # Save statistics
-with open(f"out/net/{case_study}{'-do' if do_enable else ''}_stats.pkl", 'wb') as stats_file:
+with open(fstaname, 'wb') as stats_file:
     pickle.dump(stats, stats_file)
 
 # Plot and save the training results
@@ -134,4 +115,4 @@ plt.plot(stats.testing .accuracyLog, label='Testing')
 plt.xlabel('Epoch')
 plt.ylabel('Accuracy')
 plt.legend()
-plt.savefig(f'out/net/{case_study}_train.png')
+plt.savefig(ffigname)
