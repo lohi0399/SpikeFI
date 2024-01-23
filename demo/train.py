@@ -17,7 +17,13 @@ error = snn.loss(net_params).to(device)
 optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
 stats = snn.utils.stats()
 
-print(cs.CASE_STUDY + ":")
+print("Training configuration:")
+print(f"  - case study: {cs.CASE_STUDY}")
+print(f"  - dropout: {'yes' if cs.DO_ENABLED else 'no'}")
+print(f"  - epochs num: {cs.EPOCHS_NUM}")
+print(f"  - trial: {cs.trial}")
+print()
+
 for epoch in range(cs.EPOCHS_NUM):
     tSt = datetime.now()
 

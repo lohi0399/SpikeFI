@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 import slayerSNN as snn
 
 # Configuration parameters (modify depending on application)
-CASE_STUDY = 'nmnist-deep'
+CASE_STUDY = 'nmnist-lenet'
 DO_ENABLED = False
 EPOCHS_NUM = 100
 OUT_DIR = 'out/net'
