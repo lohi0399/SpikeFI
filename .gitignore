@@ -141,7 +141,6 @@ example/**/out
 
 # Output
 out/
-fig/
 
 # Pickle files
 *.pkl

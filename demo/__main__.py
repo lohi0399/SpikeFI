@@ -1,26 +1,17 @@
 import torch
-from torch.utils.data import DataLoader
 
 import slayerSNN as snn
 
 import spikefi as sfi
-import example as cs
+import demo as cs
 
-net: torch.nn.Module = torch.load(f"{cs.out_dir}/{cs.case_study}{'-do' if cs.do_enable else ''}.pt")
+net: cs.Network = torch.load(f"{cs.OUT_DIR}/{cs.CASE_STUDY}{'-do' if cs.DO_ENABLED else ''}.pt")
 net.eval()
-net_params = snn.params(f'example/config/{cs.fyamlname}.yaml')
-
-testing_set = cs.CSDataset(
-    datasetPath=net_params['training']['path']['dir_test'],
-    sampleFile=net_params['training']['path']['list_test'],
-    samplingTime=net_params['simulation']['Ts'],
-    sampleLength=net_params['simulation']['tSample'])
-test_loader = DataLoader(dataset=testing_set, batch_size=12, shuffle=False, num_workers=4)
 
 cmpn = sfi.Campaign(net, (2, 34, 34), net.slayer)
 # print(cmpn)
 
-error = snn.loss(net_params).to(cmpn.device)
+error = snn.loss(cs.net_params).to(cmpn.device)
 
 s1 = sfi.ff.FaultSite('SF1', (slice(None), 9, 0, 0))
 s2 = sfi.ff.FaultSite('SF1', (slice(None), 1, 0, 0))
@@ -46,11 +37,13 @@ cmpn.then_inject([f8])
 # print(cmpn.rounds)
 
 print(cmpn)
-cmpn.run(test_loader, error)
+cmpn.run(cs.test_loader, error)
 # cmpn.run_complete(test_loader, SaturatedSynapse(21.), ['SF1'])
 
 data = cmpn.export()
+data.save()
 cmpn.save()
 
-cmpn_ = sfi.Campaign.from_object(data)
+data_ = sfi.CampaignData.load()
+cmpn_ = data_.build()
 cmpn__ = sfi.Campaign.load()

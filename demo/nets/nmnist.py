@@ -2,7 +2,7 @@ import torch
 
 import slayerSNN as snn
 
-from example.neuromorphic import NDataset, NNetwork
+from demo.nets.neuromorphic import NDataset, NNetwork
 
 
 class NMNISTDataset(NDataset):

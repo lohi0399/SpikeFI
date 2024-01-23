@@ -17,7 +17,7 @@ from slayerSNN.slayer import spikeLayer
 from slayerSNN.utils import stats as spikeStats
 
 import spikefi.fault as ff
-from spikefi.utils.io import make_out_filepath
+import spikefi.utils.io as sfi_io
 from spikefi.utils.layer import LayersInfo
 from spikefi.utils.progress import CampaignProgress, refresh_progress_job
 
@@ -476,10 +476,12 @@ class CampaignData:
         return campaign
 
     def save(self, fname: str = None) -> None:
-        with open(fname or make_out_filepath('campaign.pkl'), 'wb') as pkl:
+        if not fname:
+            def_fname = sfi_io.rename_if_multiple('campaign.pkl', sfi_io.RES_DIR)
+        with open(fname or def_fname, 'wb') as pkl:
             pickle.dump(self, pkl)
 
     @staticmethod
     def load(fname: str = None) -> 'CampaignData':
-        with open(fname or make_out_filepath('campaign.pkl'), 'rb') as pkl:
+        with open(fname or sfi_io.make_res_filepath('campaign.pkl'), 'rb') as pkl:
             return pickle.load(pkl)
