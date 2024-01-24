@@ -9,7 +9,7 @@ import slayerSNN as snn
 
 # Configuration parameters (modify depending on application)
 CASE_STUDY = 'nmnist-lenet'
-DO_ENABLED = False
+DO_ENABLED = True
 EPOCHS_NUM = 100
 OUT_DIR = 'out/net'
 
@@ -38,7 +38,11 @@ else:
 os.makedirs(OUT_DIR, exist_ok=True)
 
 base_fname = f"{CASE_STUDY}{'-do' if DO_ENABLED else ''}"
-trial = str(len([f for f in os.listdir(OUT_DIR) if base_fname in f and f.endswith('.pt')]) or '')
+trial = str(
+    len([f for f in os.listdir(OUT_DIR)
+         if (base_fname + '_') in f
+         and f.endswith('.pt')])
+    or '')
 
 fnetname = f"{base_fname}_net{trial}.pt"
 fstaname = f"{base_fname}_stats{trial}.pkl"

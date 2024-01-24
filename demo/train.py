@@ -67,13 +67,20 @@ for epoch in range(cs.EPOCHS_NUM):
 
 # Save statistics
 with open(cs.fstaname, 'wb') as stats_file:
-    pickle.dump(stats, stats_file)
+    pickle.dump(stats, os.path.join(cs.OUT_DIR, stats_file))
 
 # Plot and save the training results
 plt.figure()
-plt.plot(stats.training.accuracyLog, label='Training')
-plt.plot(stats.testing .accuracyLog, label='Testing')
-plt.xlabel('Epoch')
-plt.ylabel('Accuracy')
-plt.legend()
-plt.savefig(cs.ffigname)
+plt.plot(range(1, cs.EPOCHS_NUM + 1), torch.Tensor(stats.training.accuracyLog) * 100., 'b--', label='Training')
+plt.plot(range(1, cs.EPOCHS_NUM + 1), torch.Tensor(stats.testing.accuracyLog) * 100., 'g-', label='Testing')
+plt.xlabel('Epoch #')
+plt.ylabel('Accuracy (%)')
+plt.legend(loc='lower right')
+plt.xticks(ticks=[1] + list(range(10, cs.EPOCHS_NUM + 1, 10)))
+plt.xticks(ticks=range(2, cs.EPOCHS_NUM + 1, 2), minor=True)
+plt.yticks(ticks=range(0, 101, 10))
+plt.yticks(ticks=range(0, 100, 2), minor=True)
+plt.grid(visible=True, which='both', axis='both')
+plt.xlim((1, cs.EPOCHS_NUM))
+plt.ylim((0., 100.))
+plt.savefig(os.path.join(cs.OUT_DIR, cs.ffigname))
