@@ -1,6 +1,7 @@
 import spikefi as sfi
+import demo as cs
 
-cmpn = sfi.Campaign.load('./out/nmnist_syn_satu21_SF1.pkl')
-data = cmpn.export()
+data = sfi.CampaignData.load(sfi.utils.io.make_res_filepath(cs.base_fname + '_neuron_dead_sf1.pkl'))
 
-sfi.visual.plot_synaptic(data, sfi.fault.SaturatedSynapse(21.))
+sfi.visual.plot_neuronal(data, sfi.fm.DeadNeuron())
+# sfi.visual.plot_synaptic(data, sfi.fm.SaturatedSynapse(21.))

@@ -5,11 +5,11 @@ import os
 
 from spikefi.core import CampaignData
 import spikefi.fault as ff
-from spikefi.utils.io import make_filepath
+from spikefi.utils.io import make_fig_filepath
 
 
 MAX_SYN_NUM = 250000
-PLOT_FORMAT = '.png'
+PLOT_FORMAT = '.svg'
 
 
 # TODO: Implement
@@ -81,7 +81,7 @@ def plot_synaptic(cmpn_data: CampaignData, fault_model: ff.FaultModel,
         if not plot_name:
             plot_name = f"synaptic_{layer}_{fault_model.get_name()}_{fault_model.args[0]}"
 
-        plot_path = make_filepath(out_dir='fig', out_fname=plot_name + PLOT_FORMAT)
+        plot_path = make_fig_filepath(out_fname=plot_name + PLOT_FORMAT)
 
         plt.savefig(plot_path, bbox_inches='tight', transparent=False)
 

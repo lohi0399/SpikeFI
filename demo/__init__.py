@@ -9,18 +9,17 @@ import slayerSNN as snn
 
 # Configuration parameters (modify depending on application)
 CASE_STUDY = 'nmnist-lenet'
-DO_ENABLED = True
-EPOCHS_NUM = 100
+DO_ENABLED = False
 OUT_DIR = 'out/net'
 
-_error = ValueError(f"Case study '{CASE_STUDY}' not added.")
+_exception = ValueError(f"Case study '{CASE_STUDY}' not added.")
 
 # To work on a new case study:
 #   - Create a new import case
 
 # Case study imports
 if 'nmnist' in CASE_STUDY:
-    fyamlname = 'nmnist'
+    fyamlname = 'nmnist.yaml'
     from demo.nets.nmnist import NMNISTDataset as Dataset
 
     if CASE_STUDY == 'nmnist-deep':
@@ -28,27 +27,17 @@ if 'nmnist' in CASE_STUDY:
     elif CASE_STUDY == 'nmnist-lenet':
         from demo.nets.nmnist import LeNetNetwork as Network
     else:
-        raise _error
+        raise _exception
 else:
-    raise _error
+    raise _exception
 
 # No changes needed after this line
 # --------------------------
 
 os.makedirs(OUT_DIR, exist_ok=True)
-
 base_fname = f"{CASE_STUDY}{'-do' if DO_ENABLED else ''}"
-trial = str(
-    len([f for f in os.listdir(OUT_DIR)
-         if (base_fname + '_') in f
-         and f.endswith('.pt')])
-    or '')
 
-fnetname = f"{base_fname}_net{trial}.pt"
-fstaname = f"{base_fname}_stats{trial}.pkl"
-ffigname = f"{base_fname}_train{trial}.svg"
-
-net_params = snn.params(f'demo/config/{fyamlname}.yaml')
+net_params = snn.params(f'demo/config/{fyamlname}')
 
 train_set = Dataset(
     data_path=net_params['training']['path']['dir_train'],
@@ -63,3 +52,23 @@ test_set = Dataset(
     sampling_time=net_params['simulation']['Ts'],
     sample_length=net_params['simulation']['tSample'])
 test_loader = DataLoader(dataset=test_set, batch_size=12, shuffle=False, num_workers=4)
+
+
+def calculate_trial() -> str:
+    return str(
+        len([f for f in os.listdir(OUT_DIR)
+             if (base_fname + '_') in f
+             and f.endswith('.pt')])
+        or '')
+
+
+def get_fnetname(trial: str = None) -> str:
+    return f"{base_fname}_net{trial or calculate_trial()}.pt"
+
+
+def get_fstaname(trial: str = None) -> str:
+    return f"{base_fname}_stats{trial or calculate_trial()}.pkl"
+
+
+def get_ffigname(trial: str = None) -> str:
+    return f"{base_fname}_train{trial or calculate_trial()}.svg"

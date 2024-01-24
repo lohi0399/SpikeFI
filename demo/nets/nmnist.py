@@ -66,8 +66,8 @@ class LeNetNetwork(NNetwork):
         self.SF1 = self.slayer.dense(120, 84)
         self.SF2 = self.slayer.dense(84, 10)
 
-        self.SDC = self.slayer.dropout(0.5)
-        self.SDF = self.slayer.dropout(0.25)
+        self.SDC = self.slayer.dropout(0.4)
+        self.SDF = self.slayer.dropout(0.2)
 
     def forward(self, s_in, do_enable=False):
         s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 6, 28, 28

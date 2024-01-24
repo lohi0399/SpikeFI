@@ -1,3 +1,4 @@
+import os
 import torch
 
 import slayerSNN as snn
@@ -5,7 +6,7 @@ import slayerSNN as snn
 import spikefi as sfi
 import demo as cs
 
-net: cs.Network = torch.load(f"{cs.OUT_DIR}/{cs.CASE_STUDY}{'-do' if cs.DO_ENABLED else ''}.pt")
+net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.get_fnetname(trial='1')))
 net.eval()
 
 cmpn = sfi.Campaign(net, (2, 34, 34), net.slayer)
@@ -33,17 +34,17 @@ cmpn.then_inject([f8])
 # cmpn.eject(round_idx=2)
 # print(cmpn.rounds)
 
-# cmpn.eject()
+cmpn.eject()
 # print(cmpn.rounds)
 
 print(cmpn)
-cmpn.run(cs.test_loader, error)
-# cmpn.run_complete(test_loader, SaturatedSynapse(21.), ['SF1'])
+# cmpn.run(cs.test_loader, error)
+cmpn.run_complete(cs.test_loader, sfi.fm.DeadNeuron(), ['SF1'])
 
-data = cmpn.export()
-data.save()
-cmpn.save()
+# data = cmpn.export()
+# data.save()
+cmpn.save(sfi.utils.io.make_res_filepath(cs.base_fname + '_neuron_dead_sf1.pkl'))
 
-data_ = sfi.CampaignData.load()
-cmpn_ = data_.build()
-cmpn__ = sfi.Campaign.load()
+# data_ = sfi.CampaignData.load()
+# cmpn_ = data_.build()
+# cmpn__ = sfi.Campaign.load()
