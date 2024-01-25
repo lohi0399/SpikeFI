@@ -2,6 +2,7 @@ __all__ = ["plot", "train",
            "Dataset", "Network"]
 
 import os
+import re
 
 from torch.utils.data import DataLoader
 
@@ -55,9 +56,12 @@ test_loader = DataLoader(dataset=test_set, batch_size=12, shuffle=False, num_wor
 
 
 def calculate_trial() -> str:
-    trials = [f.removesuffix('.pt')[-1] for f in os.listdir(OUT_DIR)
+    fnames = [f.removesuffix('.pt') for f in os.listdir(OUT_DIR)
               if (base_fname + '_') in f and f.endswith('.pt')]
-    return max([int(t) if t.isdecimal() else 0 for t in trials]) + 1
+
+    trial_matches = [re.search(r'\d+$', f) for f in fnames]
+
+    return max([int(m.group()) if m else 0 for m in trial_matches]) + 1
 
 
 def get_fnetname(trial: str = None) -> str:
