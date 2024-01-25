@@ -13,6 +13,7 @@ EPOCHS_NUM = 100
 # Generalized network/dataset initialization
 device = torch.device('cuda')
 net = cs.Network(cs.net_params).to(device)
+trial = cs.calculate_trial()
 
 error = snn.loss(cs.net_params).to(device)
 optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
@@ -22,7 +23,7 @@ print("Training configuration:")
 print(f"  - case study: {cs.CASE_STUDY}")
 print(f"  - dropout: {'yes' if cs.DO_ENABLED else 'no'}")
 print(f"  - epochs num: {EPOCHS_NUM}")
-print(f"  - trial: {cs.calculate_trial() or 0}")
+print(f"  - trial: {trial or 0}")
 print()
 
 for epoch in range(EPOCHS_NUM):
@@ -64,11 +65,11 @@ for epoch in range(EPOCHS_NUM):
 
     # Save trained network (based on the best testing accuracy)
     if stats.testing.accuracyLog[-1] == stats.testing.maxAccuracy:
-        torch.save(net, os.path.join(cs.OUT_DIR, cs.get_fnetname()))
+        torch.save(net, os.path.join(cs.OUT_DIR, cs.get_fnetname(trial)))
 
 # Save statistics
-with open(cs.get_fstaname(), 'wb') as stats_file:
-    pickle.dump(stats, os.path.join(cs.OUT_DIR, stats_file))
+with open(os.path.join(cs.OUT_DIR, cs.get_fstaname(trial)), 'wb') as stats_file:
+    pickle.dump(stats, stats_file)
 
 # Plot and save the training results
 plt.figure()
@@ -84,4 +85,4 @@ plt.yticks(ticks=range(0, 100, 2), minor=True)
 plt.grid(visible=True, which='both', axis='both')
 plt.xlim((1, EPOCHS_NUM))
 plt.ylim((0., 100.))
-plt.savefig(os.path.join(cs.OUT_DIR, cs.get_ffigname()))
+plt.savefig(os.path.join(cs.OUT_DIR, cs.get_ffigname(trial)))

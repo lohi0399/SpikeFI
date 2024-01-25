@@ -55,11 +55,9 @@ test_loader = DataLoader(dataset=test_set, batch_size=12, shuffle=False, num_wor
 
 
 def calculate_trial() -> str:
-    return str(
-        len([f for f in os.listdir(OUT_DIR)
-             if (base_fname + '_') in f
-             and f.endswith('.pt')])
-        or '')
+    trials = [f.removesuffix('.pt')[-1] for f in os.listdir(OUT_DIR)
+              if (base_fname + '_') in f and f.endswith('.pt')]
+    return max([int(t) if t.isdecimal() else 0 for t in trials]) + 1
 
 
 def get_fnetname(trial: str = None) -> str:
