@@ -136,11 +136,11 @@ dmypy.json
 data/datasets/
 data/datasets
 
-# Examples output
-example/**/out
-
 # Output
 out/
 
 # Pickle files
 *.pkl
+
+# Playground script
+playground.py
