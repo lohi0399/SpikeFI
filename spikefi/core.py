@@ -197,11 +197,13 @@ class Campaign:
 
         # Evaluate faults' effects
         with torch.no_grad():
+            self.progress.timer()
             if len(self.rounds) <= 1:
                 self._evaluate_single(test_loader, error)
             else:
                 self._evaluate_optimized(test_loader, error)
 
+        self.progress.timer()
         progress_thread.join()
         del self.progress_lock
 
@@ -461,6 +463,7 @@ class CampaignData:
         self.orounds = cmpn.orounds
         self.rgroups = cmpn.rgroups
         self.performance = cmpn.performance
+        self.duration = cmpn.progress.get_duration_sec()
 
     def build(self) -> Campaign:
         campaign = Campaign(self.golden, self.layers_info.shape_in, self.slayer)
