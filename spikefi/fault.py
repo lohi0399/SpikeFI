@@ -7,8 +7,6 @@ from operator import or_
 
 from torch import Tensor
 
-from slayerSNN.slayer import spikeLayer
-
 from spikefi.utils.layer import LayersInfo
 
 
@@ -135,52 +133,6 @@ class FaultModel:
     def restore(self, site: FaultSite) -> float | Tensor:
         self.perturbed.pop(site)
         return self.original.pop(site)
-
-
-class ParametricFaultModel(FaultModel):
-    def __init__(self, param_name: str, param_method: Callable[..., float | Tensor], *param_args) -> None:
-        super().__init__(FaultTarget.PARAMETER, lambda _, v: v, dict())
-        self.method.__name__ = 'set_value'
-
-        self.param_name = param_name
-        self.param_method = param_method
-        self.param_args = param_args
-
-        self.param_original = None
-        self.param_perturbed = None
-        self.flayer = None
-
-    def __repr__(self) -> str:
-        return super().__repr__() + "\n" \
-            + f"  - Parameter Name: '{self.param_name}'\n" \
-            + f"  - Parameter Method: {self.param_method.__name__}\n" \
-            + f"  - Parameter Arguments: {self.param_args}"
-
-    def __str__(self) -> str:
-        return super().__str__() + f" | Parametric: '{self.param_name}', {self.param_method.__name__}"
-
-    def _key(self) -> tuple:
-        return self.target, self.method, self.param_name, self.param_method, self.param_args
-
-    def is_param_perturbed(self) -> bool:
-        return self.flayer is not None
-
-    def param_perturb(self, slayer: spikeLayer) -> None:
-        self.flayer = deepcopy(slayer)
-
-        self.param_original = self.flayer.neuron[self.param_name]
-        self.param_perturbed = self.param_method(self.param_original, *self.param_args)
-        self.flayer.neuron[self.param_name] = self.param_perturbed
-
-    def param_restore(self) -> None:
-        self.flayer.neuron[self.param_name] = self.param_original
-        self.param_original = None
-        self.param_perturbed = None
-
-        return self.flayer.neuron[self.param_name]
-
-    def perturb(self, original: float | Tensor, site: FaultSite) -> float | Tensor:
-        return super().perturb(original, site, self.args[0].pop(site))
 
 
 class Fault:
