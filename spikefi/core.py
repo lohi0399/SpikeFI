@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterable
 from copy import deepcopy
+import os
 import pickle
 import random
 from threading import Lock, Thread
@@ -33,7 +34,8 @@ VERSION = '1.0.0'
 
 
 class Campaign:
-    def __init__(self, net: nn.Module, shape_in: tuple[int, int, int], slayer: spikeLayer) -> None:
+    def __init__(self, net: nn.Module, shape_in: tuple[int, int, int], slayer: spikeLayer, name: str = 'sfi-campaign') -> None:
+        self.name = name
         self.golden = net
         self.golden.eval()
         self.faulty = None
@@ -47,6 +49,7 @@ class Campaign:
         self.golden.forward = MethodType(Campaign._forward_opt_wrapper(self.layers_info, self.slayer), self.golden)
 
         self.r_idx = 0
+        self.duration = 0.
         self.rounds: list[ff.FaultRound] = [ff.FaultRound()]
         self.orounds: list[ff.OptimizedFaultRound] = []
         self.rgroups: dict[str, list[int]] = {}
@@ -55,12 +58,25 @@ class Campaign:
 
     def __repr__(self) -> str:
         s = 'FI Campaign:\n'
+        s += f"  - Name: '{self.name}'\n"
         s += f"  - Network: '{self.golden.__class__.__name__}':\n"
         s += f"  - {str(self.layers_info).replace('}', '  }')}\n"
         s += f"  - Rounds ({len(self.rounds)}): {{\n"
-        for round_idx, round in enumerate(self.rounds):
-            round_str = str(round).replace('\n', '\n      ')
-            s += f"      #{round_idx}: {round_str}\n"
+
+        rounds_num = len(self.rounds)
+        show_less_rounds = rounds_num > 10
+
+        def indented(s):
+            return s.replace('\n', '\n      ')
+
+        for r in range(5) if show_less_rounds else range(rounds_num):
+            s += f"      #{r}: {indented(str(self.rounds[r]))}\n"
+
+        if show_less_rounds:
+            s += "\n       ...\n\n"
+            for r in range(rounds_num - 5, rounds_num):
+                s += f"      #{r}: {indented(str(self.rounds[r]))}\n"
+
         s += '  }'
 
         return s
@@ -159,6 +175,36 @@ class Campaign:
         self.rounds.append(ff.FaultRound())
         return self.inject(faults, -1)
 
+    def inject_complete(self, fault_models: Iterable[ff.FaultModel], layer_names: Iterable[str] = []):
+        if layer_names is not None and not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
+            raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
+        if not fault_models or not isinstance(fault_models, Iterable):
+            raise TypeError(f"'{type(fault_models).__name__}' object for layer_names arguement is not iterable or is empty")
+
+        if layer_names:
+            # Keep only injectable layers
+            # (could skip that and remove non-injectable layers at the validation step
+            #  but this way it is faster as the invalid faults are not even created)
+            lay_names_inj = [lay_name for lay_name in layer_names
+                             if self.layers_info.is_injectable(lay_name)]
+        else:
+            lay_names_inj = self.layers_info.get_injectables()
+
+        if not len(self.rounds[-1]):
+            self.eject(-1)
+
+        for fm in fault_models:
+            is_syn = fm.is_synaptic()
+
+            for lay_name in lay_names_inj:
+                lay_shape = self.layers_info.get_shapes(is_syn, lay_name)
+                for k in range(lay_shape[0] if is_syn else 1):
+                    for l in range(lay_shape[0 + is_syn]):          # noqa: E741
+                        for m in range(lay_shape[1 + is_syn]):
+                            for n in range(lay_shape[2 + is_syn]):
+                                self.then_inject(
+                                    [ff.Fault(fm, ff.FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
+
     def eject(self, faults: Iterable[ff.Fault] = None, round_idx: int = None) -> None:
         if faults is not None and not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
@@ -204,6 +250,8 @@ class Campaign:
                 self._evaluate_optimized(test_loader, error)
 
         self.progress.timer()
+        self.duration = self.progress.get_duration_sec()
+
         progress_thread.join()
         del self.progress_lock
 
@@ -344,39 +392,15 @@ class Campaign:
         if error:
             stats.testing.lossSum += error.numSpikes(output, target.to(self.device)).cpu().item()
 
-    def run_complete(self, test_loader: DataLoader, fault_model: ff.FaultModel, layer_names: Iterable[str] = None, error: snn.loss = None) -> None:
-        if layer_names is not None and not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
-            raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
-
-        if layer_names:
-            lay_names_inj = [lay_name for lay_name in layer_names
-                             if self.layers_info.is_injectable(lay_name)]
-        else:
-            lay_names_inj = self.layers_info.get_injectables()
-
-        is_syn = fault_model.is_synaptic()
-        self.rounds.clear()
-
-        for lay_name in lay_names_inj:
-            lay_shape = self.layers_info.get_shapes(is_syn, lay_name)
-            for k in range(lay_shape[0] if is_syn else 1):
-                for l in range(lay_shape[0 + is_syn]):          # noqa: E741
-                    for m in range(lay_shape[1 + is_syn]):
-                        for n in range(lay_shape[2 + is_syn]):
-                            self.then_inject(
-                                [ff.Fault(fault_model, ff.FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
-
-        self.run(test_loader, error)
-
     def export(self) -> 'CampaignData':
         return CampaignData(VERSION, self)
 
-    def save(self, filepath: str = None) -> None:
-        self.export().save(filepath)
+    def save(self, fname: str = None) -> None:
+        self.export().save(fname)
 
     @staticmethod
-    def load(filepath: str = None) -> 'Campaign':
-        return CampaignData.load(filepath).build()
+    def load(fname: str) -> 'Campaign':
+        return CampaignData.load(fname).build()
 
     @staticmethod
     def _forward_opt_wrapper(layers_info: LayersInfo, slayer: spikeLayer) -> Callable[[Tensor, Optional[int], Optional[int]], Tensor]:
@@ -450,6 +474,8 @@ class CampaignData:
         self.version = version
         cmpn = deepcopy(campaign)
 
+        self.name = cmpn.name
+
         self.golden = cmpn.golden
         self.slayer = cmpn.slayer
         self.device = cmpn.device
@@ -459,15 +485,16 @@ class CampaignData:
         # Restore default forward function to golden network
         self.golden.forward = MethodType(type(self.golden).forward, self.golden)
 
+        self.duration = cmpn.duration
         self.rounds = cmpn.rounds
         self.orounds = cmpn.orounds
         self.rgroups = cmpn.rgroups
         self.performance = cmpn.performance
-        self.duration = cmpn.progress.get_duration_sec()
 
     def build(self) -> Campaign:
-        campaign = Campaign(self.golden, self.layers_info.shape_in, self.slayer)
+        campaign = Campaign(self.golden, self.layers_info.shape_in, self.slayer, self.name)
         campaign.layers_info = self.layers_info
+        campaign.duration = self.duration
         campaign.rounds = self.rounds
         campaign.orounds = self.orounds
         campaign.rgroups = self.rgroups
@@ -480,11 +507,13 @@ class CampaignData:
 
     def save(self, fname: str = None) -> None:
         if not fname:
-            def_fname = sfi_io.rename_if_multiple('campaign.pkl', sfi_io.RES_DIR)
-        with open(fname or def_fname, 'wb') as pkl:
+            def_fname = sfi_io.rename_if_multiple(self.name + '.pkl', sfi_io.RES_DIR)
+            def_fpath = os.path.join(sfi_io.RES_DIR, def_fname)
+
+        with open(fname or def_fpath, 'wb') as pkl:
             pickle.dump(self, pkl)
 
     @staticmethod
-    def load(fname: str = None) -> 'CampaignData':
-        with open(fname or sfi_io.make_res_filepath('campaign.pkl'), 'rb') as pkl:
+    def load(fname: str) -> 'CampaignData':
+        with open(fname, 'rb') as pkl:
             return pickle.load(pkl)

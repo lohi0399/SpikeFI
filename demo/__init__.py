@@ -2,11 +2,13 @@ __all__ = ["plot", "train",
            "Dataset", "Network"]
 
 import os
-import re
 
 from torch.utils.data import DataLoader
 
 import slayerSNN as snn
+
+import spikefi as sfi
+
 
 # Configuration parameters (modify depending on application)
 CASE_STUDY = 'nmnist-lenet'
@@ -54,23 +56,16 @@ test_set = Dataset(
     sample_length=net_params['simulation']['tSample'])
 test_loader = DataLoader(dataset=test_set, batch_size=12, shuffle=False, num_workers=4)
 
-
-def calculate_trial() -> str:
-    fnames = [f.removesuffix('.pt') for f in os.listdir(OUT_DIR)
-              if (base_fname + '_') in f and f.endswith('.pt')]
-
-    trial_matches = [re.search(r'\d+$', f) for f in fnames]
-
-    return max([int(m.group()) if m else 0 for m in trial_matches]) + 1
+trial_def = sfi.utils.io.calculate_trial(base_fname + '_.pt', OUT_DIR)
 
 
 def get_fnetname(trial: str = None) -> str:
-    return f"{base_fname}_net{trial or calculate_trial()}.pt"
+    return f"{base_fname}_net{trial or trial_def}.pt"
 
 
 def get_fstaname(trial: str = None) -> str:
-    return f"{base_fname}_stats{trial or calculate_trial()}.pkl"
+    return f"{base_fname}_stats{trial or trial_def}.pkl"
 
 
 def get_ffigname(trial: str = None) -> str:
-    return f"{base_fname}_train{trial or calculate_trial()}.svg"
+    return f"{base_fname}_train{trial or trial_def}.svg"

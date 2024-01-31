@@ -6,13 +6,12 @@ import slayerSNN as snn
 import spikefi as sfi
 import demo as cs
 
-net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.get_fnetname(trial='1')))
+
+fnetname = cs.get_fnetname(trial='2')
+net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, fnetname))
 net.eval()
 
-cmpn = sfi.Campaign(net, (2, 34, 34), net.slayer)
-# print(cmpn)
-
-error = snn.loss(cs.net_params).to(cmpn.device)
+cmpn = sfi.Campaign(net, (2, 34, 34), net.slayer, name=fnetname.removesuffix('.pt') + '_neuron_dead_satu')
 
 s1 = sfi.ff.FaultSite('SF1', (slice(None), 9, 0, 0))
 s2 = sfi.ff.FaultSite('SF1', (slice(None), 1, 0, 0))
@@ -31,20 +30,11 @@ cmpn.inject([f1])
 cmpn.then_inject([f6, f7])
 cmpn.then_inject([f8])
 
-# cmpn.eject(round_idx=2)
-# print(cmpn.rounds)
-
 cmpn.eject()
-# print(cmpn.rounds)
+
+cmpn.inject_complete([sfi.fm.DeadNeuron(), sfi.fm.SaturatedNeuron()])
 
 print(cmpn)
-# cmpn.run(cs.test_loader, error)
-cmpn.run_complete(cs.test_loader, sfi.fm.DeadNeuron(), ['SF1'])
+cmpn.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn.device))
 
-# data = cmpn.export()
-# data.save()
-cmpn.save(sfi.utils.io.make_res_filepath(cs.base_fname + '_neuron_dead_sf1.pkl'))
-
-# data_ = sfi.CampaignData.load()
-# cmpn_ = data_.build()
-# cmpn__ = sfi.Campaign.load()
+cmpn.save()
