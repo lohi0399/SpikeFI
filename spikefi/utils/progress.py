@@ -18,7 +18,7 @@ class CampaignProgress:
         s = " Batch #\tTotal time\tProgress\n"
         s += f"{self.batch + 1:4d}/{self.batch_num:d}\t"
         if self.start_time:
-            s += f"{(time() - self.start_time):.3f} sec\t"
+            s += f"{(time() - self.start_time):6d} sec\t"
         s += f"{self.status * 100.:6.2f} %\t\n"
 
         self._flush_lines_num = s.count('\n') + 2

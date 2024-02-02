@@ -238,7 +238,7 @@ class Campaign:
         # Initialize and refresh progress
         self.progress = CampaignProgress(len(test_loader), len(self.rounds))
         self.progress_lock = Lock()
-        progress_thread = Thread(target=refresh_progress_job, args=(self.progress, .1,), daemon=True)
+        progress_thread = Thread(target=refresh_progress_job, args=(self.progress, 1,), daemon=True)
         progress_thread.start()
 
         # Evaluate faults' effects
