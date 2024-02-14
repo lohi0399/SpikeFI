@@ -53,7 +53,6 @@ def plot_synaptic(cmpn_data: CampaignData, fault_model: ff.FaultModel,
             faults = [f for f in round.search(layer) if f.model == fault_model]
             for fault in faults:
                 for site in fault.sites:
-                    # TODO: Check difference between best and min/max stats
                     test_stats = cmpn_data.performance[r].testing
                     perf[site.position] = test_stats.maxAccuracy if accuracy else test_stats.minloss
 
