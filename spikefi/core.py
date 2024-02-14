@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterable
 from copy import deepcopy
+from enum import Enum
 import os
 import pickle
 import random
@@ -31,6 +32,14 @@ from spikefi.utils.progress import CampaignProgress, refresh_progress_job
 
 
 VERSION = '1.0.0'
+
+
+class CampaignOptimization(Enum):
+    NONE = 0
+    LATE_START = O1 = 1
+    EARLY_STOP = O2 = 2
+    LOOP_SWAP = O3 = 4
+    ALL = 7
 
 
 class Campaign:
@@ -232,7 +241,8 @@ class Campaign:
         if not self.rounds:
             self.rounds.append(ff.FaultRound())
 
-    def run(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+    def run(self, test_loader: DataLoader, error: snn.loss = None,
+            opt: CampaignOptimization = CampaignOptimization.ALL) -> None:
         self._pre_run()
 
         # Initialize and refresh progress
@@ -247,7 +257,16 @@ class Campaign:
             if len(self.rounds) <= 1:
                 self._evaluate_single(test_loader, error)
             else:
-                self._evaluate_optimized(test_loader, error)
+                if opt is CampaignOptimization.ALL:
+                    self._evaluate_optimized(test_loader, error)
+                elif opt is CampaignOptimization.LATE_START:
+                    self._evaluate_late_start(test_loader, error)
+                elif opt is CampaignOptimization.EARLY_STOP:
+                    self._evaluate_early_stop(test_loader, error)
+                elif opt is CampaignOptimization.LOOP_SWAP:
+                    self._evaluate_loop_swap(test_loader, error)
+                else:
+                    self._evaluate_naive(test_loader, error)
 
         self.progress.timer()
         self.duration = self.progress.get_duration_sec()
@@ -350,6 +369,51 @@ class Campaign:
 
             with self.progress_lock:
                 self.progress.step()
+                self.progress.set_batch(b)
+
+    def _evaluate_naive(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+        out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
+
+        for round_group in self.rgroups.values():  # For each fault round group
+            for self.r_idx in round_group:  # For each fault round
+                oround = self.orounds[self.r_idx]
+                for b, (input, target, label) in enumerate(test_loader):  # For each batch
+                    output = self.faulty(input.to(self.device))
+                    if oround.is_out_faulty:
+                        out_neuron_callable(None, (output,))
+
+                    self._advance_performance(self.performance[self.r_idx], output, target, label, error)
+
+                    with self.progress_lock:
+                        self.progress.step()
+
+            with self.progress_lock:
+                self.progress.set_batch(b)
+
+    def _evaluate_late_start(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+        pass
+
+    def _evaluate_early_stop(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+        pass
+
+    def _evaluate_loop_swap(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+        out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
+
+        for b, (input, target, label) in enumerate(test_loader):  # For each batch
+            for round_group in self.rgroups.values():  # For each fault round group
+                for self.r_idx in round_group:  # For each fault round
+                    oround = self.orounds[self.r_idx]
+
+                    output = self.faulty(input.to(self.device))
+                    if oround.is_out_faulty:
+                        out_neuron_callable(None, (output,))
+
+                    self._advance_performance(self.performance[self.r_idx], output, target, label, error)
+
+                    with self.progress_lock:
+                        self.progress.step()
+
+            with self.progress_lock:
                 self.progress.set_batch(b)
 
     def _evaluate_optimized(self, test_loader: DataLoader, error: snn.loss = None) -> None:

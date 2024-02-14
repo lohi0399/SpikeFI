@@ -152,7 +152,7 @@ class Fault:
         if random_sites_num:
             self.sites_pending.extend([FaultSite() for _ in range(random_sites_num)])
 
-    def __add__(self, other: 'Fault') -> FaultSite():
+    def __add__(self, other: 'Fault') -> FaultSite:
         assert self.model == other.model, 'Only two Faults with the same Fault Model can be added'
         return Fault(deepcopy(self.model), self.get_sites(include_pending=True) + other.get_sites(include_pending=True))
 
