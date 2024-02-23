@@ -11,9 +11,9 @@ fnetname = cs.get_fnetname(trial='2')
 net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, fnetname))
 net.eval()
 
-cmpn = sfi.Campaign(net, (2, 34, 34), net.slayer, name=fnetname.removesuffix('.pt') + '_neuron_dead_SF2_nopt')
+cmpn = sfi.Campaign(net, (2, 34, 34), net.slayer, name=fnetname.removesuffix('.pt') + '_neuron_dead_SF1_O4')
 
-s1 = sfi.ff.FaultSite(layer_name='SF2')
+s1 = sfi.ff.FaultSite(layer_name='SF1')
 s2 = sfi.ff.FaultSite(layer_name='SF2')
 s3 = sfi.ff.FaultSite('SC3', (slice(None), 2, 2, 0))
 f1 = sfi.ff.Fault(sfi.fm.DeadNeuron(), s1)
@@ -32,9 +32,11 @@ cmpn.then_inject([f8])
 
 cmpn.eject()
 
-cmpn.inject_complete([sfi.fm.DeadNeuron()], ['SF2'])
+cmpn.inject_complete([sfi.fm.DeadNeuron()], ['SF1'])
 
 print(cmpn)
-cmpn.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn.device), opt=sfi.CampaignOptimization.NONE)
+cmpn.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn.device), opt=sfi.CampaignOptimization.O4)
 
 cmpn.save()
+
+print(f"{cmpn.duration : .2f} secs")

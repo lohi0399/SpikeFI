@@ -280,6 +280,19 @@ class FaultRound(dict):  # dict[tuple[str, FaultModel], Fault]
     def any_synaptic(self, layer_name: str) -> bool:
         return self.any(layer_name, FaultTarget.synaptic())
 
+    # Exclusive any
+    def xany(self, layer_name: str, target: FaultTarget = FaultTarget.all()) -> bool:
+        return self.any(layer_name, target) and not self.any(layer_name, ~target)
+
+    def xany_neuronal(self, layer_name: str) -> bool:
+        return self.xany(layer_name, FaultTarget.neuronal())
+
+    def xany_parametric(self, layer_name: str) -> bool:
+        return self.xany(layer_name, FaultTarget.parametric())
+
+    def xany_synaptic(self, layer_name: str) -> bool:
+        return self.xany(layer_name, FaultTarget.synaptic())
+
     def extract(self, fault: Fault) -> None:
         if not fault:
             return
@@ -334,30 +347,79 @@ class FaultRound(dict):  # dict[tuple[str, FaultModel], Fault]
     def search_synaptic(self, layer_name: str) -> list[Fault]:
         return self.search(layer_name, FaultTarget.synaptic())
 
-    def optimized(self, layers_info: LayersInfo) -> 'OptimizedFaultRound':
-        oround = OptimizedFaultRound(self, layers_info)
+    def optimized(self, layers_info: LayersInfo, late_start_en: bool = True, early_stop_en: bool = True) -> 'OptimizedFaultRound':
+        oround = OptimizedFaultRound(self, layers_info, late_start_en, early_stop_en)
         oround.fault_map = deepcopy(self.fault_map)
 
         return oround
 
 
-# TODO: Optimize Fault Rounds on the go (each time a fault is inserted) ?
 class OptimizedFaultRound(FaultRound):
-    def __init__(self, round: FaultRound, layers_info: LayersInfo) -> None:
-        # Sort round's faults in ascending order of faults appearence (early faulty layer first)
+    def __init__(self, round: FaultRound, layers_info: LayersInfo, late_start_en: bool = True, early_stop_en: bool = True) -> None:
+        # Sort round's faults in ascending order of faults appearence (late-start layer first)
         super().__init__(FaultRound(sorted(round.items(), key=lambda item: layers_info.index(item[0][0]))))
         self.fault_map = dict(sorted(self.fault_map.items(), key=lambda item: layers_info.index(item[0])))
 
-        # Early and Late layers are the first and last ones to contain a fault, respectively
-        # For a single fault early and late layers are the same
-        round_iter = iter(self)
-        self.early_name = next(round_iter, (None,))[0]
-
-        self.late_name = self.early_name
-        for key in round_iter:
-            self.late_name = key[0]
-
-        self.early_idx = layers_info.index(self.early_name) if self.early_name else None
-        self.late_idx = layers_info.index(self.late_name) if self.late_name else None
-
         self.is_out_faulty = any(layers_info.is_output(key[0]) for key in self)
+
+        # The following code is useful only in the "evaluate optimized" method
+
+        self.neuronal_only = True
+        self.parametric_only = True
+        self.synaptic_only = True
+        for key in self:
+            fm: FaultModel = key[1]
+            self.neuronal_only &= fm.is_neuronal()
+            self.parametric_only &= fm.is_parametric()
+            self.synaptic_only &= fm.is_synaptic()
+
+        # Late-Start and Early-Stop layers are the first and last ones to contain a fault, respectively
+        # For a single fault, the late-start and early-stop layers are the same
+        self.late_start_en = late_start_en
+        self.late_start_name = layers_info.order[0]
+        self.late_start_idx = 0
+        self.early_stop_en = early_stop_en and not self.is_out_faulty
+        self.early_stop_name = None
+        self.early_stop_idx = None
+
+        # For an empty round (golden inference), the late-start layer is None and its idx is equal to the layer number
+        if not self:
+            self.late_start_en = True
+            self.late_start_idx = len(layers_info)
+            self.early_stop_en = False
+            return
+
+        if not self.late_start_en and not self.early_stop_en:
+            return
+
+        round_iter = iter(self)
+
+        self.late_start_name = next(round_iter, (None,))[0]
+        self.late_start_idx = layers_info.index(self.late_start_name) if self.late_start_name else None
+
+        if self.early_stop_en:
+            self.early_stop_name = self.late_start_name
+            for key in round_iter:
+                self.early_stop_name = key[0]
+            self.early_stop_idx = layers_info.index(self.early_stop_name) if self.early_stop_name else None
+
+            # Early-Stop is meaningful only when at least the 2 last layers are fault-free
+            if self.early_stop_idx >= len(layers_info) - 2:
+                self.early_stop_en = False
+                self.early_stop_name = None
+                self.early_stop_idx = None
+
+        if not self.late_start_en:
+            self.late_start_name = layers_info.order[0]
+            self.late_start_idx = 0
+            return
+
+        # If there are only neuronal faults, late-start layer can be increased
+        # because the fault effect is evaluated on the next layer's pre-hook
+        # TODO: Explore the same when there are parametric-only faults (param hooks can run on the golden net but only for the faults in the late-start layer)
+        if self.neuronal_only and not self.parametric_only:
+            self.late_start_idx += 1
+            if self.late_start_idx < len(layers_info):
+                self.late_start_name = layers_info.order[self.late_start_idx]
+            else:
+                self.late_start_name = None

@@ -35,11 +35,11 @@ VERSION = '1.0.0'
 
 
 class CampaignOptimization(Enum):
-    NONE = 0
-    LATE_START = O1 = 1
-    EARLY_STOP = O2 = 2
-    LOOP_SWAP = O3 = 4
-    ALL = 7
+    FB = O0 = 0     # Loop-Nesting 1: Per fault, per batch
+    BF = O1 = 1     # Loop-Nesting 2: Per batch, per fault
+    LS = O2 = 2     # Late Start (implies loop-nesting 2)
+    ES = O3 = 3     # Early Stop (implies loop-nesting 2)
+    FO = O4 = 4     # Fully Optimized (all opts combined)
 
 
 class Campaign:
@@ -242,8 +242,19 @@ class Campaign:
             self.rounds.append(ff.FaultRound())
 
     def run(self, test_loader: DataLoader, error: snn.loss = None,
-            opt: CampaignOptimization = CampaignOptimization.ALL) -> None:
-        self._pre_run()
+            opt: CampaignOptimization = CampaignOptimization.FO) -> None:
+        self._pre_run(opt)
+
+        # Decide optimization level
+        if len(self.rounds) <= 1:
+            evaluate_method = self._evaluate_single
+        else:
+            if opt.value >= CampaignOptimization.O2.value:
+                evaluate_method = self._evaluate_optimized
+            elif opt == CampaignOptimization.O1:
+                evaluate_method = self._evaluate_O1
+            else:
+                evaluate_method = self._evaluate_O0
 
         # Initialize and refresh progress
         self.progress = CampaignProgress(len(test_loader), len(self.rounds))
@@ -254,19 +265,7 @@ class Campaign:
         # Evaluate faults' effects
         with torch.no_grad():
             self.progress.timer()
-            if len(self.rounds) <= 1:
-                self._evaluate_single(test_loader, error)
-            else:
-                if opt is CampaignOptimization.ALL:
-                    self._evaluate_optimized(test_loader, error)
-                elif opt is CampaignOptimization.LATE_START:
-                    self._evaluate_late_start(test_loader, error)
-                elif opt is CampaignOptimization.EARLY_STOP:
-                    self._evaluate_early_stop(test_loader, error)
-                elif opt is CampaignOptimization.LOOP_SWAP:
-                    self._evaluate_loop_swap(test_loader, error)
-                else:
-                    self._evaluate_naive(test_loader, error)
+            evaluate_method(test_loader, error)
 
         self.progress.timer()
         self.duration = self.progress.get_duration_sec()
@@ -278,7 +277,7 @@ class Campaign:
         for stats in self.performance:
             stats.update()
 
-    def _pre_run(self) -> None:
+    def _pre_run(self, opt: CampaignOptimization) -> None:
         if not self.rounds:
             self.rounds = [ff.FaultRound()]
 
@@ -288,6 +287,9 @@ class Campaign:
         self.rgroups.clear()
         self.handles.clear()
         self.performance.clear()
+
+        late_start_en = opt == CampaignOptimization.LS or opt == CampaignOptimization.FO
+        early_stop_en = opt == CampaignOptimization.ES or opt == CampaignOptimization.FO
 
         # No need to remove the hook handles, as in each run a new copy of the golden net is created and used
         # for handle in self.handles:
@@ -300,12 +302,12 @@ class Campaign:
 
         for r, round in enumerate(self.rounds):
             # Create optimized fault rounds from rounds
-            oround = round.optimized(self.layers_info)
+            oround = round.optimized(self.layers_info, late_start_en, early_stop_en)
             self.orounds.append(oround)
 
             # Group fault rounds per earliest faulty layer
-            self.rgroups.setdefault(oround.early_name, list())
-            self.rgroups[oround.early_name].append(r)
+            self.rgroups.setdefault(oround.late_start_name, list())
+            self.rgroups[oround.late_start_name].append(r)
 
             # Create faulty network instances for fault rounds
             self._perturb_net(oround)
@@ -371,32 +373,12 @@ class Campaign:
                 self.progress.step()
                 self.progress.set_batch(b)
 
-    def _evaluate_naive(self, test_loader: DataLoader, error: snn.loss = None) -> None:
-        out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
-
+    def _evaluate_O0(self, test_loader: DataLoader, error: snn.loss = None) -> None:
         for round_group in self.rgroups.values():  # For each fault round group
             for self.r_idx in round_group:  # For each fault round
-                oround = self.orounds[self.r_idx]
-                for b, (input, target, label) in enumerate(test_loader):  # For each batch
-                    output = self.faulty(input.to(self.device))
-                    if oround.is_out_faulty:
-                        out_neuron_callable(None, (output,))
+                self._evaluate_single(test_loader, error)
 
-                    self._advance_performance(self.performance[self.r_idx], output, target, label, error)
-
-                    with self.progress_lock:
-                        self.progress.step()
-
-            with self.progress_lock:
-                self.progress.set_batch(b)
-
-    def _evaluate_late_start(self, test_loader: DataLoader, error: snn.loss = None) -> None:
-        pass
-
-    def _evaluate_early_stop(self, test_loader: DataLoader, error: snn.loss = None) -> None:
-        pass
-
-    def _evaluate_loop_swap(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+    def _evaluate_O1(self, test_loader: DataLoader, error: snn.loss = None) -> None:
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
 
         for b, (input, target, label) in enumerate(test_loader):  # For each batch
@@ -428,19 +410,18 @@ class Campaign:
             for round_group in self.rgroups.values():  # For each fault round group
                 for self.r_idx in round_group:  # For each fault round
                     oround = self.orounds[self.r_idx]
+                    ls_idx = oround.late_start_idx
+                    es_idx = oround.early_stop_idx
 
-                    if oround:
-                        late_out = self.faulty(golden_spikes[oround.early_idx], oround.early_idx, oround.late_idx)
+                    if not oround.early_stop_en:
+                        output = self.faulty(golden_spikes[ls_idx], ls_idx)
                         if oround.is_out_faulty:
-                            out_neuron_callable(None, (late_out,))
-                            output = late_out
-                        else:
-                            # Early stop optimization
-                            late_next_out = self.faulty(late_out, oround.late_idx + 1, oround.late_idx + 1)
-                            early_stop = torch.equal(late_next_out, golden_spikes[oround.late_idx + 2])
-                            output = golden_spikes[-1] if early_stop else self.faulty(late_next_out, oround.late_idx + 2)
+                            out_neuron_callable(None, (output,))
                     else:
-                        output = golden_spikes[-1]
+                        # Early stop optimization
+                        early_stop_next_out = self.faulty(golden_spikes[ls_idx], ls_idx, es_idx + 1)
+                        early_stop = torch.equal(early_stop_next_out, golden_spikes[es_idx + 2])
+                        output = golden_spikes[-1] if early_stop else self.faulty(early_stop_next_out, es_idx + 2)
 
                     self._advance_performance(self.performance[self.r_idx], output, target, label, error)
 
@@ -474,7 +455,7 @@ class Campaign:
             subject_layers = [lay_name for lay_idx, lay_name in enumerate(layers_info.order)
                               if start_idx <= lay_idx <= end_idx]
 
-            spikes = spikes_in
+            spikes = torch.clone(spikes_in)
             for layer_name in subject_layers:
                 layer = getattr(self, layer_name)
                 spikes = layer(spikes)
