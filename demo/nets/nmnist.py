@@ -19,7 +19,7 @@ class NMNISTDataset(NDataset):
 
 
 class NMNISTNetwork(NNetwork):
-    def __init__(self, net_params: snn.params):
+    def __init__(self, net_params: snn.params, do_enable=False):
         super(NMNISTNetwork, self).__init__(net_params)
 
         self.SC1 = self.slayer.conv(2, 16, 5, padding=1)
@@ -31,22 +31,19 @@ class NMNISTNetwork(NNetwork):
 
         self.SF1 = self.slayer.dense((8, 8, 64), 10)
 
-        self.SDC = self.slayer.dropout(0.3)
+        self.SDC = self.slayer.dropout(0.3 if do_enable else 0.0)
 
-    def forward(self, s_in, do_enable=False):
-        s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 16, 32, 32
-        if do_enable:
-            s_out = self.SDC(s_out)
+    def forward(self, s_in):
+        s_out = self.SDC(s_in)
+        s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_out)))  # 16, 32, 32
         s_out = self.slayer.spike(self.slayer.psp(self.SP1(s_out)))  # 16, 16, 16
 
+        s_out = self.SDC(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SC2(s_out)))  # 32, 16, 16
-        if do_enable:
-            s_out = self.SDC(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  # 32, 8,  8
 
+        s_out = self.SDC(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  # 64, 8,  8
-        if do_enable:
-            s_out = self.SDC(s_out)
 
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 10
 
@@ -54,7 +51,7 @@ class NMNISTNetwork(NNetwork):
 
 
 class LeNetNetwork(NNetwork):
-    def __init__(self, net_params: snn.params):
+    def __init__(self, net_params: snn.params, do_enable=False):
         super(LeNetNetwork, self).__init__(net_params)
 
         self.SC1 = self.slayer.conv(2, 6, 7)
@@ -67,27 +64,23 @@ class LeNetNetwork(NNetwork):
         self.SF1 = self.slayer.dense(120, 84)
         self.SF2 = self.slayer.dense(84, 10)
 
-        self.SDC = self.slayer.dropout(0.4)
-        self.SDF = self.slayer.dropout(0.2)
+        self.SDC = self.slayer.dropout(0.4 if do_enable else 0.0)
+        self.SDF = self.slayer.dropout(0.2 if do_enable else 0.0)
 
-    def forward(self, s_in, do_enable=False):
-        s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 6, 28, 28
-        if do_enable:
-            s_out = self.SDC(s_out)
+    def forward(self, s_in):
+        s_out = self.SDC(s_in)
+        s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_out)))  # 6, 28, 28
         s_out = self.slayer.spike(self.slayer.psp(self.SP1(s_out)))  # 6, 14, 14
 
+        s_out = self.SDC(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SC2(s_out)))  # 16, 10, 10
-        if do_enable:
-            s_out = self.SDC(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SP2(s_out)))  # 16,  5,  5
 
+        s_out = self.SDC(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  # 120, 1, 1
-        if do_enable:
-            s_out = self.SDC(s_out)
 
+        s_out = self.SDF(s_out)
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 84
-        if do_enable:
-            s_out = self.SDF(s_out)
 
         s_out = self.slayer.spike(self.slayer.psp(self.SF2(s_out)))  # 10
 

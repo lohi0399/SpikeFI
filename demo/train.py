@@ -12,11 +12,12 @@ EPOCHS_NUM = 100
 
 # Generalized network/dataset initialization
 device = torch.device('cuda')
-net = cs.Network(cs.net_params).to(device)
+net = cs.Network(cs.net_params, cs.DO_ENABLED).to(device)
 trial = cs.trial_def
 
 error = snn.loss(cs.net_params).to(device)
 optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
+# optimizer = torch.optim.NAdam(net.parameters(), lr=0.01)
 stats = snn.utils.stats()
 
 print("Training configuration:")
@@ -33,7 +34,7 @@ for epoch in range(EPOCHS_NUM):
         input = input.to(device)
         target = target.to(device)
 
-        output = net.forward(input, cs.DO_ENABLED)
+        output = net.forward(input)
 
         stats.training.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
         stats.training.numSamples += len(label)
@@ -52,7 +53,7 @@ for epoch in range(EPOCHS_NUM):
         input = input.to(device)
         target = target.to(device)
 
-        output = net.forward(input, cs.DO_ENABLED)
+        output = net.forward(input)
 
         stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
         stats.testing.numSamples += len(label)

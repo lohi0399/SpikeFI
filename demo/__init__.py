@@ -13,7 +13,6 @@ import spikefi as sfi
 # Configuration parameters (modify depending on application)
 CASE_STUDY = 'gesture'  # 'nmnist-lenet' # 'nmnist-deep' # 'gesture'
 DO_ENABLED = False
-BATCH_SIZE = 12
 OUT_DIR = 'out/net'
 
 _exception = ValueError(f"Case study '{CASE_STUDY}' not added.")
@@ -24,6 +23,7 @@ _exception = ValueError(f"Case study '{CASE_STUDY}' not added.")
 # Case study imports
 if 'nmnist' in CASE_STUDY:
     fyamlname = 'nmnist.yaml'
+    batch_size = 12
     from demo.nets.nmnist import NMNISTDataset as Dataset
 
     if CASE_STUDY == 'nmnist-deep':
@@ -34,6 +34,7 @@ if 'nmnist' in CASE_STUDY:
         raise _exception
 elif CASE_STUDY == 'gesture':
     fyamlname = 'gesture.yaml'
+    batch_size = 4
     from demo.nets.gesture import GestureDataset as Dataset
     from demo.nets.gesture import GestureNetwork as Network
 else:
@@ -52,14 +53,14 @@ train_set = Dataset(
     samples_file=net_params['training']['path']['list_train'],
     sampling_time=net_params['simulation']['Ts'],
     sample_length=net_params['simulation']['tSample'])
-train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, num_workers=4)
+train_loader = DataLoader(dataset=train_set, batch_size=batch_size, num_workers=4)
 
 test_set = Dataset(
     data_path=net_params['training']['path']['dir_test'],
     samples_file=net_params['training']['path']['list_test'],
     sampling_time=net_params['simulation']['Ts'],
     sample_length=net_params['simulation']['tSample'])
-test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, num_workers=4)
+test_loader = DataLoader(dataset=test_set, batch_size=batch_size, num_workers=4)
 
 trial_def = sfi.utils.io.calculate_trial(base_fname + '_.pt', OUT_DIR)
 
