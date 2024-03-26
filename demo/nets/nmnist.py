@@ -15,7 +15,7 @@ class NMNISTDataset(NDataset):
         desired_class = torch.zeros((10, 1, 1, 1))
         desired_class[class_label, ...] = 1
 
-        return spikes_in, desired_class, class_label
+        return input_index, spikes_in, desired_class, class_label
 
 
 class NMNISTNetwork(NNetwork):
@@ -47,6 +47,7 @@ class NMNISTNetwork(NNetwork):
         s_out = self.slayer.spike(self.slayer.psp(self.SC3(s_out)))  # 64, 8,  8
         if do_enable:
             s_out = self.SDC(s_out)
+
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 10
 
         return s_out
@@ -87,6 +88,7 @@ class LeNetNetwork(NNetwork):
         s_out = self.slayer.spike(self.slayer.psp(self.SF1(s_out)))  # 84
         if do_enable:
             s_out = self.SDF(s_out)
+
         s_out = self.slayer.spike(self.slayer.psp(self.SF2(s_out)))  # 10
 
         return s_out

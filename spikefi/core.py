@@ -362,7 +362,7 @@ class Campaign:
         is_out_faulty = self.orounds[self.r_idx].is_out_faulty
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
 
-        for b, (input, target, label) in enumerate(test_loader):
+        for b, (_, input, target, label) in enumerate(test_loader):
             output = self.faulty(input.to(self.device))
             if is_out_faulty:
                 out_neuron_callable(None, (output,))
@@ -381,7 +381,7 @@ class Campaign:
     def _evaluate_O1(self, test_loader: DataLoader, error: snn.loss = None) -> None:
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
 
-        for b, (input, target, label) in enumerate(test_loader):  # For each batch
+        for b, (_, input, target, label) in enumerate(test_loader):  # For each batch
             for round_group in self.rgroups.values():  # For each fault round group
                 for self.r_idx in round_group:  # For each fault round
                     oround = self.orounds[self.r_idx]
@@ -401,7 +401,7 @@ class Campaign:
     def _evaluate_optimized(self, test_loader: DataLoader, error: snn.loss = None) -> None:
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
 
-        for b, (input, target, label) in enumerate(test_loader):  # For each batch
+        for b, (_, input, target, label) in enumerate(test_loader):  # For each batch
             # Store golden spikes
             golden_spikes = [input.to(self.device)]
             for layer_idx in range(len(self.layers_info)):

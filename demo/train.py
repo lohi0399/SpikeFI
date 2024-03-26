@@ -13,7 +13,7 @@ EPOCHS_NUM = 100
 # Generalized network/dataset initialization
 device = torch.device('cuda')
 net = cs.Network(cs.net_params).to(device)
-trial = cs.calculate_trial()
+trial = cs.trial_def
 
 error = snn.loss(cs.net_params).to(device)
 optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
@@ -29,7 +29,7 @@ print()
 for epoch in range(EPOCHS_NUM):
     tSt = datetime.now()
 
-    for i, (input, target, label) in enumerate(cs.train_loader, 0):
+    for i, (_, input, target, label) in enumerate(cs.train_loader, 0):
         input = input.to(device)
         target = target.to(device)
 
@@ -48,7 +48,7 @@ for epoch in range(EPOCHS_NUM):
         stats.print(epoch, i, (datetime.now() - tSt).total_seconds())
 
     # Testing
-    for i, (input, target, label) in enumerate(cs.test_loader, 0):
+    for i, (_, input, target, label) in enumerate(cs.test_loader, 0):
         input = input.to(device)
         target = target.to(device)
 
