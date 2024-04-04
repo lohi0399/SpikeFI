@@ -31,8 +31,8 @@ class NMNISTNetwork(NNetwork):
 
         self.SF1 = self.slayer.dense((8, 8, 64), 10)
 
-        self.SDC = self.slayer.dropout(0.2 if do_enable else 0.0)
-        self.SDF = self.slayer.dropout(0.5 if do_enable else 0.0)
+        self.SDC = self.slayer.dropout(0.10 if do_enable else 0.0)
+        self.SDF = self.slayer.dropout(0.25 if do_enable else 0.0)
 
     def forward(self, s_in):
         s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 16, 32, 32
@@ -65,8 +65,8 @@ class LeNetNetwork(NNetwork):
         self.SF1 = self.slayer.dense(120, 84)
         self.SF2 = self.slayer.dense(84, 10)
 
-        self.SDC = self.slayer.dropout(0.2 if do_enable else 0.0)
-        self.SDF = self.slayer.dropout(0.5 if do_enable else 0.0)
+        self.SDC = self.slayer.dropout(0.10 if do_enable else 0.0)
+        self.SDF = self.slayer.dropout(0.25 if do_enable else 0.0)
 
     def forward(self, s_in):
         s_out = self.slayer.spike(self.slayer.psp(self.SC1(s_in)))   # 6, 28, 28

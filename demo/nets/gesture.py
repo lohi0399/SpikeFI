@@ -32,8 +32,8 @@ class GestureNetwork(NNetwork):
         self.SF1 = self.slayer.dense((8, 8, 32), 512)
         self.SF2 = self.slayer.dense(512, 11)
 
-        self.SDC = self.slayer.dropout(0.2 if do_enable else 0.0)
-        self.SDF = self.slayer.dropout(0.5 if do_enable else 0.0)
+        self.SDC = self.slayer.dropout(0.05 if do_enable else 0.0)
+        self.SDF = self.slayer.dropout(0.10 if do_enable else 0.0)
 
     def forward(self, s_in):
         s_out = self.slayer.spike(self.slayer.psp(self.SP0(s_in)))   # 2,  32, 32

@@ -8,7 +8,7 @@ import slayerSNN as snn
 
 import demo as cs
 
-EPOCHS_NUM = 100
+EPOCHS_NUM = 200
 
 # Generalized network/dataset initialization
 device = torch.device('cuda')
@@ -16,8 +16,7 @@ net = cs.Network(cs.net_params, cs.DO_ENABLED).to(device)
 trial = cs.trial_def
 
 error = snn.loss(cs.net_params).to(device)
-optimizer = torch.optim.Adam(net.parameters(), lr=0.01, amsgrad=True)
-# optimizer = torch.optim.NAdam(net.parameters(), lr=0.01)
+optimizer = torch.optim.Adam(net.parameters(), lr=1e-3, amsgrad=True)
 stats = snn.utils.stats()
 
 print("Training configuration:")
