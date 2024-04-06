@@ -16,7 +16,7 @@ class CampaignProgress:
 
     def __str__(self) -> str:
         s = " Batch #\tTotal time\tProgress\n"
-        s += f"{self.batch + 1:4d}/{self.batch_num:d}\t"
+        s += f"{self.batch + 1:4d}/{self.batch_num:<4d}\t"
         if self.start_time:
             s += f"{(time() - self.start_time):6.0f} sec\t"
         s += f"{self.status * 100.:6.2f} %\t\n"

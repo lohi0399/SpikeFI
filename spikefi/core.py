@@ -499,7 +499,7 @@ class Campaign:
                 for site in fault.sites:
                     ind = site.unroll()
                     with torch.no_grad():
-                        layer.weight[ind] = fault.model.perturb_store(layer.weight[ind].item(), site)
+                        layer.weight[ind] = fault.model.perturb_store(layer.weight[ind].cpu(), site)
 
         return synaptic_pre_hook
 

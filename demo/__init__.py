@@ -1,4 +1,4 @@
-__all__ = ["plot", "train",
+__all__ = ["bitflip", "plot", "train",
            "Dataset", "Network"]
 
 import os
@@ -25,6 +25,7 @@ if 'nmnist' in CASE_STUDY:
     fyamlname = 'nmnist.yaml'
     batch_size = 12
     shuffle = False
+    shape_in = (2, 34, 34)
 
     from demo.nets.nmnist import NMNISTDataset as Dataset
     if CASE_STUDY == 'nmnist-deep':
@@ -35,8 +36,9 @@ if 'nmnist' in CASE_STUDY:
         raise _exception
 elif CASE_STUDY == 'gesture':
     fyamlname = 'gesture.yaml'
-    batch_size = 12
+    batch_size = 4
     shuffle = True
+    shape_in = (2, 128, 128)
 
     from demo.nets.gesture import GestureDataset as Dataset
     from demo.nets.gesture import GestureNetwork as Network

@@ -27,11 +27,13 @@ def qua_value(original: float | Tensor, scale: float | Tensor, zero_point: int |
     return torch.dequantize(torch.quantize_per_tensor(original, scale, zero_point, dtype))
 
 
+# LSB: bit 0
+# MSB: bit N-1
 def bfl_value(original: float | Tensor, bit: int, scale: float | Tensor, zero_point: int | Tensor, dtype: torch.dtype) -> Tensor:
     idt_info = torch.iinfo(qua.q2i_dtype(dtype))
     assert bit >= 0 and bit < idt_info.bits, 'Invalid bit position to flip'
 
-    q = torch.quantize_per_tensor(original, scale, zero_point, dtype)
+    q = torch.quantize_per_tensor(original, scale, zero_point, dtype).int_repr()
     return torch.dequantize(q ^ 2 ** bit)
 
 

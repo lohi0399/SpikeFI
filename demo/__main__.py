@@ -7,13 +7,15 @@ import spikefi as sfi
 import demo as cs
 
 
+CMPN_SEL = 2
+
 fnetname = cs.get_fnetname(trial='2')
-net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, fnetname))
+net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.CASE_STUDY, fnetname))
 net.eval()
 
 s1 = sfi.ff.FaultSite(layer_name='SF1')
 s2 = sfi.ff.FaultSite(layer_name='SF2')
-s3 = sfi.ff.FaultSite('SC3', (slice(None), 2, 2, 0))
+s3 = sfi.ff.FaultSite('SC2', (slice(None), 2, 2, 0))
 f1 = sfi.ff.Fault(sfi.fm.DeadNeuron(), s1)
 f2 = sfi.ff.Fault(sfi.fm.SaturatedNeuron(), s2)
 f3 = sfi.ff.Fault(sfi.fm.DeadNeuron(), s3)
@@ -21,23 +23,34 @@ f4 = sfi.ff.Fault(sfi.fm.SaturatedSynapse(2.), random_sites_num=1)
 f5 = sfi.ff.Fault(sfi.fm.DeadNeuron(), random_sites_num=2)
 f6 = sfi.ff.Fault(sfi.fm.ParametricNeuron('theta', 0.1), [sfi.ff.FaultSite('SC1'), sfi.ff.FaultSite('SC1')])
 f7 = sfi.ff.Fault(sfi.fm.ParametricNeuron('theta', 0.1), sfi.ff.FaultSite('SC2'))
-f8 = sfi.ff.Fault(sfi.fm.SaturatedNeuron(), [sfi.ff.FaultSite('SC3')])
+f8 = sfi.ff.Fault(sfi.fm.SaturatedNeuron(), [sfi.ff.FaultSite('SC2')])
 
-for o in range(5):
-    cmpn = sfi.Campaign(net, (2, 34, 34), net.slayer, name=fnetname.removesuffix('.pt') + f'_neuron_dead_SF2_O{o}')
+if CMPN_SEL == 1:
+    cmpn1 = sfi.Campaign(net, cs.shape_in, net.slayer,
+                         name=fnetname.removesuffix('.pt') + 'fault_campaign_demo')
 
-    # cmpn.inject([f1, f2, f3])
-    # cmpn.inject([f1])
-    # cmpn.then_inject([f6, f7])
-    # cmpn.then_inject([f8])
+    cmpn1.inject([f4])
+    cmpn1.inject([f1, f2, f3])
+    cmpn1.then_inject([f5, f6])
+    cmpn1.then_inject([f7])
+    cmpn1.then_inject([f8])
 
-    # cmpn.eject()
+    cmpn1.eject(round_idx=1)
 
-    cmpn.inject_complete([sfi.fm.DeadNeuron()], ['SF2'])
+    print(cmpn1)
+    cmpn1.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn1.device),
+              opt=sfi.CampaignOptimization.O4)
 
-    print(cmpn)
-    cmpn.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn.device), opt=sfi.CampaignOptimization(o))
+    cmpn1.save()
+    print(f"{cmpn1.duration : .2f} secs")
 
-    cmpn.save()
+elif CMPN_SEL == 2:
+    cmpn2 = sfi.Campaign(net, cs.shape_in, net.slayer,
+                         name=fnetname.removesuffix('.pt') + 'fault_campaign_full')
 
-    print(f"{cmpn.duration : .2f} secs")
+    cmpn2.inject_complete([sfi.fm.DeadNeuron()])
+
+    cmpn2.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn2.device))
+
+    cmpn2.save()
+    print(f"{cmpn2.duration : .2f} secs")

@@ -18,8 +18,11 @@ def plot_neuronal(cmpn_data: CampaignData, fault_model: ff.FaultModel,
     pass
 
 
-def plot_synaptic(cmpn_data: CampaignData, fault_model: ff.FaultModel,
+def plot_synaptic(cmpn_data: CampaignData, fault_model: ff.FaultModel = None,
                   accuracy: bool = True, plot_name: str = None) -> None:
+    if not fault_model:
+        fault_model = next(iter(cmpn_data.rounds[0]))[1]
+
     if not fault_model.is_synaptic():
         print("Use only with synaptic fault models.")
         return
@@ -80,7 +83,7 @@ def plot_synaptic(cmpn_data: CampaignData, fault_model: ff.FaultModel,
         if not plot_name:
             plot_name = f"synaptic_{layer}_{fault_model.get_name()}_{fault_model.args[0]}"
 
-        plot_path = make_fig_filepath(out_fname=plot_name + PLOT_FORMAT)
+        plot_path = make_fig_filepath(filename=plot_name + PLOT_FORMAT)
 
         plt.savefig(plot_path, bbox_inches='tight', transparent=False)
 
