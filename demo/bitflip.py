@@ -25,7 +25,7 @@ fmodels = []
 for b in range(B):
     fmodels.append(sfi.fm.BitflippedSynapse(b, wmin, wmax, qdtype))
 
-cmpn.inject_complete(fmodels, [layer_name])
+cmpn.inject_complete(fmodels, [layer_name], fault_sampling_k=sfi.visual.MAX_SYN_NUM)
 
 print(cmpn)
 cmpn.run(cs.test_loader)

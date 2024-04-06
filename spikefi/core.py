@@ -1,6 +1,7 @@
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from enum import Enum
+from itertools import product
 import os
 import pickle
 import random
@@ -184,7 +185,7 @@ class Campaign:
         self.rounds.append(ff.FaultRound())
         return self.inject(faults, -1)
 
-    def inject_complete(self, fault_models: Iterable[ff.FaultModel], layer_names: Iterable[str] = []):
+    def inject_complete(self, fault_models: Iterable[ff.FaultModel], layer_names: Iterable[str] = [], fault_sampling_k: int = None):
         if layer_names is not None and not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
             raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
         if not fault_models or not isinstance(fault_models, Iterable):
@@ -207,12 +208,21 @@ class Campaign:
 
             for lay_name in lay_names_inj:
                 lay_shape = self.layers_info.get_shapes(is_syn, lay_name)
-                for k in range(lay_shape[0] if is_syn else 1):
-                    for l in range(lay_shape[0 + is_syn]):          # noqa: E741
-                        for m in range(lay_shape[1 + is_syn]):
-                            for n in range(lay_shape[2 + is_syn]):
-                                self.then_inject(
-                                    [ff.Fault(fm, ff.FaultSite(lay_name, (k if is_syn else slice(None), l, m, n)))])
+
+                K = range(lay_shape[0] if is_syn else 1)
+                L = range(lay_shape[0 + is_syn])
+                M = range(lay_shape[1 + is_syn])
+                N = range(lay_shape[2 + is_syn])
+
+                fpos = list(product(K, L, M, N))
+
+                if fault_sampling_k is not None and fault_sampling_k <= len(fpos):
+                    fpos = random.sample(fpos, fault_sampling_k)
+
+                for p in fpos:
+                    self.then_inject(
+                        [ff.Fault(fm, ff.FaultSite(lay_name, (p[0] if is_syn else slice(None), *p[1:])))]
+                    )
 
     def eject(self, faults: Iterable[ff.Fault] = None, round_idx: int = None) -> None:
         if faults is not None and not isinstance(faults, Iterable):

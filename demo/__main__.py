@@ -27,7 +27,7 @@ f8 = sfi.ff.Fault(sfi.fm.SaturatedNeuron(), [sfi.ff.FaultSite('SC2')])
 
 if CMPN_SEL == 1:
     cmpn1 = sfi.Campaign(net, cs.shape_in, net.slayer,
-                         name=fnetname.removesuffix('.pt') + 'fault_campaign_demo')
+                         name=fnetname.removesuffix('.pt') + '_demo1')
 
     cmpn1.inject([f4])
     cmpn1.inject([f1, f2, f3])
@@ -46,10 +46,11 @@ if CMPN_SEL == 1:
 
 elif CMPN_SEL == 2:
     cmpn2 = sfi.Campaign(net, cs.shape_in, net.slayer,
-                         name=fnetname.removesuffix('.pt') + 'fault_campaign_full')
+                         name=fnetname.removesuffix('.pt') + '_demo2')
 
-    cmpn2.inject_complete([sfi.fm.DeadNeuron()])
+    cmpn2.inject_complete([sfi.fm.DeadNeuron()], layer_names=['SF2'])
 
+    print(cmpn2)
     cmpn2.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn2.device))
 
     cmpn2.save()
