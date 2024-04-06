@@ -15,7 +15,7 @@ net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.CASE_STUDY, fnetname))
 net.eval()
 
 cmpn = sfi.Campaign(net, cs.shape_in, net.slayer,
-                    name=fnetname.removesuffix('.pt') + f'_synapse_bitflip_{layer_name}')
+                    name=fnetname.removesuffix('.pt') + f"_synapse_bitflip_{layer_name or 'ALL'}")
 
 layer = getattr(net, layer_name)
 wmin = layer.weight.min().item()
@@ -25,7 +25,8 @@ fmodels = []
 for b in range(B):
     fmodels.append(sfi.fm.BitflippedSynapse(b, wmin, wmax, qdtype))
 
-cmpn.inject_complete(fmodels, [layer_name], fault_sampling_k=sfi.visual.MAX_SYN_NUM)
+cmpn.inject_complete(fmodels, [layer_name] if layer_name else [],
+                     fault_sampling_k=sfi.visual.MAX_SYN_NUM)
 
 print(cmpn)
 cmpn.run(cs.test_loader)
