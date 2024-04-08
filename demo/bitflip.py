@@ -21,12 +21,9 @@ layer = getattr(net, layer_name)
 wmin = layer.weight.min().item()
 wmax = layer.weight.max().item()
 
-fmodels = []
 for b in range(B):
-    fmodels.append(sfi.fm.BitflippedSynapse(b, wmin, wmax, qdtype))
-
-cmpn.inject_complete(fmodels, [layer_name] if layer_name else [],
-                     fault_sampling_k=sfi.visual.MAX_SYN_NUM)
+    cmpn.inject_complete([sfi.fm.BitflippedSynapse(b, wmin, wmax, qdtype)],
+                         [layer_name] if layer_name else [], fault_sampling_k=250**2)
 
 print(cmpn)
 cmpn.run(cs.test_loader)
@@ -34,7 +31,4 @@ print(f"{cmpn.duration : .2f} secs")
 
 cmpn.save()
 
-for b in range(B):
-    sfi.visual.plot_synaptic(cmpn.export(),
-                             fault_model=fmodels[b],
-                             plot_name=cmpn.name.replace('bitflip', f'bitflip{b}'))
+sfi.visual.heat(cmpn.export(), title=f"bit{b}")

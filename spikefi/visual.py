@@ -1,63 +1,79 @@
-from math import sqrt
+from math import sqrt, prod
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 
 from spikefi.core import CampaignData
 import spikefi.fault as ff
 from spikefi.utils.io import make_fig_filepath
 
 
-MAX_SYN_NUM = 250000
-PLOT_FORMAT = '.svg'
+def _data_mapping(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel = None) -> dict[tuple[str, ff.FaultModel], list[int]]:
+    data_map: dict[tuple[str, ff.FaultModel], list[int]] = {}   # { (layer, fault model), [round index] }
+
+    for lay, r_idxs in cmpn_data.rgroups.items():
+        for r in r_idxs:
+            round = cmpn_data.rounds[r]
+            if len(round) > 1 or (layer and lay != layer):
+                continue
+            key = next(iter(round.keys()))
+
+            if fault_model and fault_model not in key:
+                continue
+
+            data_map.setdefault(key, [])
+            data_map[key].append(r)
+    return data_map
 
 
-# TODO: Implement
-def plot_neuronal(cmpn_data: CampaignData, fault_model: ff.FaultModel,
-                  accuracy: bool = True, plot_name: str = None) -> None:
+def _shape_square(N: int) -> tuple[int, int]:
+    x = int(sqrt(N))
+    while N % x != 0:
+        x -= 1
+
+    return (x, int(N / x))
+
+
+def bar() -> None:
     pass
 
 
-def plot_synaptic(cmpn_data: CampaignData, fault_model: ff.FaultModel = None,
-                  accuracy: bool = True, plot_name: str = None) -> None:
-    if not fault_model:
-        fault_model = next(iter(cmpn_data.rounds[0]))[1]
+def bar_comparative() -> None:
+    pass
 
-    if not fault_model.is_synaptic():
-        print("Use only with synaptic fault models.")
-        return
 
-    os.makedirs(os.path.join(os.getcwd(), 'fig'), exist_ok=True)
-
-    for layer, r_idxs in cmpn_data.rgroups.items():
-        syn_shape = cmpn_data.layers_info.shapes_syn[layer]
-        syn_num = np.prod(syn_shape)
-        if syn_num > MAX_SYN_NUM:
-            print(f"Cannot plot synaptic faults for layer {layer}: too many synapses (>{MAX_SYN_NUM}).")
+def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel = None,
+         preserve_dim: bool = False, max_size: int = 512, title: str = None, format: str = 'svg') -> None:
+    heat_max = max_size**2
+    data_map = _data_mapping(cmpn_data, layer, fault_model)
+    for (lay, fm), r_idxs in data_map.items():
+        N = len(r_idxs)
+        if N > heat_max:
+            print("Cannot plot heat map for the following layer - fault model pair:")
+            print((lay, fm))
+            print(f"Reason: too many faults (>{heat_max}).")
             continue
 
-        if syn_shape[2] == 1 and syn_shape[3] == 1:
-            plot_shape = (syn_shape[0], syn_shape[1])
+        is_syn = fm.is_synaptic()
+        shape = cmpn_data.layers_info.shapes_syn[lay] if is_syn else cmpn_data.layers_info.shapes_neu[lay]
+
+        if N != prod(shape):
+            plot_shape = (1, N)
         else:
-            plot_shape = (syn_shape[0] * syn_shape[1], syn_shape[2] * syn_shape[3])
+            if is_syn:
+                if shape[2] == 1 and shape[3] == 1:
+                    plot_shape = (shape[0], shape[1])
+                else:
+                    plot_shape = (shape[0] * shape[1], shape[2] * shape[3])
+            else:
+                plot_shape = (shape[1] * shape[2], shape[0])
 
-        if plot_shape[0] > 500 or plot_shape[1] > 500:
-            x = int(sqrt(syn_num))
-            while syn_num % x != 0:
-                x -= 1
+        if not preserve_dim or plot_shape[0] > sqrt(heat_max) or plot_shape[1] > sqrt(heat_max):
+            plot_shape = _shape_square(N)
 
-            plot_shape = (x, int(syn_num / x))
-
-        assert syn_num == len(r_idxs), 'Insufficient number of rounds. Cannot plot due to missing data.'
-
-        perf = np.zeros(syn_shape)
-        for r in r_idxs:
-            round = cmpn_data.rounds[r]
-            faults = [f for f in round.search(layer) if f.model == fault_model]
-            for fault in faults:
-                for site in fault.sites:
-                    test_stats = cmpn_data.performance[r].testing
-                    perf[site.position] = test_stats.maxAccuracy if accuracy else test_stats.minloss
+        perf = np.zeros(N)
+        for i, r in enumerate(r_idxs):
+            test_stats = cmpn_data.performance[r].testing
+            perf[i] = test_stats.maxAccuracy
 
         fig = plt.figure(layer)
 
@@ -80,11 +96,7 @@ def plot_synaptic(cmpn_data: CampaignData, fault_model: ff.FaultModel = None,
         pos.axes.tick_params(axis='both', which='both', length=0)
         pos.axes.grid(which='both', linestyle='-')
 
-        if not plot_name:
-            plot_name = f"synaptic_{layer}_{fault_model.get_name()}_{fault_model.args[0]}"
-
-        plot_path = make_fig_filepath(filename=plot_name + PLOT_FORMAT)
+        plot_name = f"{cmpn_data.name}__heat_" + (title or f"{lay}_{fm.get_name()}{int(fm.args[0])}")
+        plot_path = make_fig_filepath(filename=plot_name + '.' + format)
 
         plt.savefig(plot_path, bbox_inches='tight', transparent=False)
-
-    return fig

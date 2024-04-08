@@ -27,8 +27,6 @@ from spikefi.utils.progress import CampaignProgress, refresh_progress_job
 
 # TODO: Fix long lines
 # TODO: Logging (in methods that might take a long time based on the rounds number, e.g., in _pre_run)
-# TODO: Verify results validity
-# TODO: Compare GPU/memory performance of each faulty vs. the golden inference
 # TODO: Parallelize fault rounds evaluation
 
 
@@ -229,7 +227,7 @@ class Campaign:
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
         # Eject from a specific round
-        if round_idx:
+        if round_idx is not None:
             # Eject indicated faults from the round
             if faults:
                 self.rounds[round_idx].extract_many(faults)
@@ -524,6 +522,7 @@ class Campaign:
         return synaptic_hook
 
 
+# TODO: Save pickle with models in cpu and move them to device when loading
 class CampaignData:
     def __init__(self, version: str, campaign: Campaign) -> None:
         self.version = version
