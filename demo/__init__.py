@@ -1,4 +1,4 @@
-__all__ = ["bitflip", "plot", "train",
+__all__ = ["bitflip", "optimizations", "plot", "train",
            "Dataset", "Network"]
 
 import os

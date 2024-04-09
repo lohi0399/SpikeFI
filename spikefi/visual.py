@@ -1,10 +1,15 @@
 from math import sqrt, prod
+import matplotlib
+import matplotlib.colorbar
 import matplotlib.pyplot as plt
 import numpy as np
 
 from spikefi.core import CampaignData
 import spikefi.fault as ff
 from spikefi.utils.io import make_fig_filepath
+
+
+CMAP = 'jet'
 
 
 def _data_mapping(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel = None) -> dict[tuple[str, ff.FaultModel], list[int]]:
@@ -41,6 +46,21 @@ def bar_comparative() -> None:
     pass
 
 
+def colormap(format: str = 'svg') -> None:
+    fig = plt.figure()
+    fig.set_size_inches(fig.get_figwidth(), 1)
+
+    cax = fig.add_axes([.05, .55, .9, .25])
+    norm = matplotlib.colors.Normalize(0, 100)
+
+    cbar = matplotlib.colorbar.Colorbar(cax, cmap=CMAP, norm=norm, orientation='horizontal', ticks=range(0, 101, 10))
+    cbar.set_ticks(range(0, 100), minor=True)
+    plt.xlabel("Classification Accuracy (%)")
+
+    plot_path = make_fig_filepath(filename="colormap." + format.removeprefix('.'))
+    plt.savefig(plot_path, transparent=True)
+
+
 def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel = None,
          preserve_dim: bool = False, max_size: int = 512, title: str = None, format: str = 'svg') -> None:
     heat_max = max_size**2
@@ -75,13 +95,13 @@ def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel 
             test_stats = cmpn_data.performance[r].testing
             perf[i] = test_stats.maxAccuracy
 
-        fig = plt.figure(layer)
+        fig = plt.figure(str((lay, fm)))
 
         hx = int(plot_shape[0] / 100.) + 1
         wx = int(plot_shape[1] / 100.) + 1
         fig.set_size_inches(wx * fig.get_figwidth(), hx * fig.get_figheight())
 
-        pos = plt.imshow(perf.reshape(*plot_shape), cmap='jet',
+        pos = plt.imshow(perf.reshape(*plot_shape), cmap=CMAP,
                          origin='lower', vmin=0., vmax=1., interpolation='none',
                          extent=[0, plot_shape[1], 0, plot_shape[0]])
 
@@ -97,6 +117,6 @@ def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel 
         pos.axes.grid(which='both', linestyle='-')
 
         plot_name = f"{cmpn_data.name}__heat_" + (title or f"{lay}_{fm.get_name()}{int(fm.args[0])}")
-        plot_path = make_fig_filepath(filename=plot_name + '.' + format)
+        plot_path = make_fig_filepath(filename=plot_name + '.' + format.removeprefix('.'))
 
         plt.savefig(plot_path, bbox_inches='tight', transparent=False)

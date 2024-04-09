@@ -31,4 +31,4 @@ print(f"{cmpn.duration : .2f} secs")
 
 cmpn.save()
 
-sfi.visual.heat(cmpn.export(), title=f"bit{b}")
+sfi.visual.heat(cmpn.export())
