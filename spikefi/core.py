@@ -183,11 +183,9 @@ class Campaign:
         self.rounds.append(ff.FaultRound())
         return self.inject(faults, -1)
 
-    def inject_complete(self, fault_models: Iterable[ff.FaultModel], layer_names: Iterable[str] = [], fault_sampling_k: int = None):
+    def inject_complete(self, fault_model: ff.FaultModel, layer_names: Iterable[str] = [], fault_sampling_k: int = None):
         if layer_names is not None and not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
             raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
-        if not fault_models or not isinstance(fault_models, Iterable):
-            raise TypeError(f"'{type(fault_models).__name__}' object for layer_names arguement is not iterable or is empty")
 
         if layer_names:
             # Keep only injectable layers
@@ -201,26 +199,26 @@ class Campaign:
         if not len(self.rounds[-1]):
             self.rounds.pop(-1)
 
-        for fm in fault_models:
-            is_syn = fm.is_synaptic()
+        is_syn = fault_model.is_synaptic()
 
-            for lay_name in lay_names_inj:
-                lay_shape = self.layers_info.get_shapes(is_syn, lay_name)
+        inj_pos = []
+        for lay_name in lay_names_inj:
+            lay_shape = self.layers_info.get_shapes(is_syn, lay_name)
 
-                K = range(lay_shape[0] if is_syn else 1)
-                L = range(lay_shape[0 + is_syn])
-                M = range(lay_shape[1 + is_syn])
-                N = range(lay_shape[2 + is_syn])
+            K = range(lay_shape[0] if is_syn else 1)
+            L = range(lay_shape[0 + is_syn])
+            M = range(lay_shape[1 + is_syn])
+            N = range(lay_shape[2 + is_syn])
 
-                fpos = list(product(K, L, M, N))
+            inj_pos += [(lay_name,) + p for p in product(K, L, M, N)]
 
-                if fault_sampling_k is not None and fault_sampling_k <= len(fpos):
-                    fpos = random.sample(fpos, fault_sampling_k)
+        if fault_sampling_k is not None and fault_sampling_k <= len(inj_pos):
+            inj_pos = random.sample(inj_pos, fault_sampling_k)
 
-                for p in fpos:
-                    self.then_inject(
-                        [ff.Fault(fm, ff.FaultSite(lay_name, (p[0] if is_syn else slice(None), *p[1:])))]
-                    )
+        for p in inj_pos:
+            self.then_inject(
+                [ff.Fault(fault_model, ff.FaultSite(p[0], (p[1] if is_syn else slice(None), *p[2:])))]
+            )
 
     def eject(self, faults: Iterable[ff.Fault] = None, round_idx: int = None) -> None:
         if faults is not None and not isinstance(faults, Iterable):

@@ -22,7 +22,7 @@ wmin = layer.weight.min().item()
 wmax = layer.weight.max().item()
 
 for b in range(B):
-    cmpn.inject_complete([sfi.fm.BitflippedSynapse(b, wmin, wmax, qdtype)],
+    cmpn.inject_complete(sfi.fm.BitflippedSynapse(b, wmin, wmax, qdtype),
                          [layer_name] if layer_name else [], fault_sampling_k=250**2)
 
 print(cmpn)

@@ -48,7 +48,7 @@ elif CMPN_SEL == 2:
     cmpn2 = sfi.Campaign(net, cs.shape_in, net.slayer,
                          name=fnetname.removesuffix('.pt') + '_demo2')
 
-    cmpn2.inject_complete([sfi.fm.DeadNeuron()], layer_names=['SF2'])
+    cmpn2.inject_complete(sfi.fm.DeadNeuron(), layer_names=['SF2'])
 
     print(cmpn2)
     cmpn2.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn2.device))
