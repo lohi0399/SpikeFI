@@ -196,7 +196,7 @@ class Campaign:
         else:
             lay_names_inj = self.layers_info.get_injectables()
 
-        if not len(self.rounds[-1]):
+        if self.rounds and not len(self.rounds[-1]):
             self.rounds.pop(-1)
 
         is_syn = fault_model.is_synaptic()
