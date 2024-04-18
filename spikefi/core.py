@@ -183,7 +183,7 @@ class Campaign:
         self.rounds.append(ff.FaultRound())
         return self.inject(faults, -1)
 
-    def inject_complete(self, fault_model: ff.FaultModel, layer_names: Iterable[str] = [], fault_sampling_k: int = None):
+    def inject_complete(self, fault_model: ff.FaultModel, layer_names: Iterable[str] = [], fault_sampling_k: int = None) -> list[ff.Fault]:
         if layer_names is not None and not isinstance(layer_names, Iterable) or isinstance(layer_names, str):
             raise TypeError(f"'{type(layer_names).__name__}' object for layer_names arguement is not iterable or is str")
 
@@ -215,10 +215,13 @@ class Campaign:
         if fault_sampling_k is not None and fault_sampling_k <= len(inj_pos):
             inj_pos = random.sample(inj_pos, fault_sampling_k)
 
+        inj_faults = []
         for p in inj_pos:
-            self.then_inject(
+            inj_faults.append(self.then_inject(
                 [ff.Fault(fault_model, ff.FaultSite(p[0], (p[1] if is_syn else slice(None), *p[2:])))]
-            )
+            ))
+
+        return inj_faults
 
     def eject(self, faults: Iterable[ff.Fault] = None, round_idx: int = None) -> None:
         if faults is not None and not isinstance(faults, Iterable):

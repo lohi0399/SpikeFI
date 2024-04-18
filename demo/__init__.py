@@ -11,8 +11,8 @@ import spikefi as sfi
 
 
 # Configuration parameters (modify depending on application)
-CASE_STUDY = 'gesture'  # 'nmnist-lenet' # 'nmnist-deep' # 'gesture'
-DO_ENABLED = True
+CASE_STUDY = 'nmnist-lenet'  # 'nmnist-lenet' # 'nmnist-deep' # 'gesture'
+DO_ENABLED = False
 OUT_DIR = 'out/net'
 
 _exception = ValueError(f"Case study '{CASE_STUDY}' not added.")
