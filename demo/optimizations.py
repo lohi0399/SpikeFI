@@ -9,10 +9,11 @@ import spikefi as sfi
 import demo as cs
 
 fm_type = sfi.fm.DeadNeuron
-L = ['']
-B = [1]
-K = [1, 2, 4, 6, 8, 10, 15, 20, 30, 40, 50, 100, 150, 200, 300, 500]  # 1, 2, 4, 6, 8, 10, 15, 20, 30, 40, 50, 100, 150, 200, 300, 500
-O = [0, 1]  # noqa E741
+fm_name = "neuron_dead"
+L = ['']  # 'SF2', 'SF1', 'SC3', 'SC2', 'SC1', ''
+B = range(1, 41)
+K = [30]  # 1, 2, 4, 6, 8, 10, 15, 20, 30, 40, 50, 100, 150, 200, 300, 500
+O = [1, 4]  # noqa E741
 
 fnetname = cs.get_fnetname(trial='2')
 net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.CASE_STUDY, fnetname))
@@ -25,7 +26,7 @@ for lay_name in L:
         for bs in B:
             test_loader = DataLoader(dataset=cs.test_set, batch_size=bs, shuffle=cs.shuffle)
             for o in O:
-                cmpn_name = fnetname.removesuffix('.pt') + f"_neuron_dead_{lay_name or 'ALL'}_bs{bs}_k{k}_O{o}"
+                cmpn_name = fnetname.removesuffix('.pt') + f"_{fm_name}_{lay_name or 'ALL'}_bs{bs}_k{k}_O{o}"
                 cmpn = sfi.Campaign(net, cs.shape_in, net.slayer, name=cmpn_name)
                 cmpn.rounds = rounds
 
