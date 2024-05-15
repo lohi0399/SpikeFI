@@ -27,7 +27,7 @@ def quant_args_from_range(xmin: float | Tensor, xmax: float | Tensor,
 
     assert xmin.size() == xmax.size()
 
-    dt_info = torch.iinfo(q2i_dtype(dtype))
+    dt_info = torch.iinfo(dtype)
     qmin = dt_info.min
     qmax = dt_info.max
 

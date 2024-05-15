@@ -30,11 +30,14 @@ def qua_value(original: float | Tensor, scale: float | Tensor, zero_point: int |
 # LSB: bit 0
 # MSB: bit N-1
 def bfl_value(original: float | Tensor, bit: int, scale: float | Tensor, zero_point: int | Tensor, dtype: torch.dtype) -> Tensor:
-    idt_info = torch.iinfo(qua.q2i_dtype(dtype))
+    idt_info = torch.iinfo(dtype)
     assert bit >= 0 and bit < idt_info.bits, 'Invalid bit position to flip'
 
-    q = torch.quantize_per_tensor(original, scale, zero_point, dtype).int_repr()
-    return torch.dequantize(q ^ 2 ** bit)
+    # q = torch.quantize_per_tensor(original, scale, zero_point, qdtype).int_repr()
+    # return torch.dequantize(q ^ 2 ** bit)
+
+    q = torch.round(original / scale + zero_point).type(dtype) ^ (2 ** bit)
+    return scale * (q - zero_point)
 
 
 # Mother class for parametric faults
