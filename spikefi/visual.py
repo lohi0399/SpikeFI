@@ -38,10 +38,12 @@ def _shape_square(N: int) -> tuple[int, int]:
     return (x, int(N / x))
 
 
+# TODO visual.bar
 def bar() -> None:
     pass
 
 
+# TODO visual.bar_comparative
 def bar_comparative() -> None:
     pass
 
@@ -62,7 +64,7 @@ def colormap(format: str = 'svg') -> None:
 
 
 def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel = None,
-         preserve_dim: bool = False, max_size: int = 512, title: str = None, format: str = 'svg') -> None:
+         preserve_dim: bool = False, max_size: int = 512, title_suffix: str = None, format: str = 'svg') -> None:
     heat_max = max_size**2
     data_map = _data_mapping(cmpn_data, layer, fault_model)
     for (lay, fm), r_idxs in data_map.items():
@@ -116,7 +118,10 @@ def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel 
         pos.axes.tick_params(axis='both', which='both', length=0)
         pos.axes.grid(which='both', linestyle='-')
 
-        plot_name = f"{cmpn_data.name}__heat_" + (title or f"{lay}_{fm.get_name()}{int(fm.args[0])}")
-        plot_path = make_fig_filepath(filename=plot_name + '.' + format.removeprefix('.'))
+        if title_suffix is None and len(data_map) > 1:
+            title_suffix = f"_{lay}_{fm.get_name()}{int(fm.args[0])}"
+        elif title_suffix:
+            title_suffix = "_" + title_suffix
+        plot_path = make_fig_filepath(filename=f"{cmpn_data.name}_heat{title_suffix or ''}.{format.removeprefix('.')}")
 
         plt.savefig(plot_path, bbox_inches='tight', transparent=False)
