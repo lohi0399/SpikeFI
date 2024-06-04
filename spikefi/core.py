@@ -250,8 +250,8 @@ class Campaign:
         if not self.rounds:
             self.rounds.append(ff.FaultRound())
 
-    def run(self, test_loader: DataLoader, error: snn.loss = None,
-            opt: CampaignOptimization = CampaignOptimization.FO) -> None:
+    def run(self, test_loader: DataLoader, error: snn.loss = None, es_tol: int = 0,
+            opt: CampaignOptimization = CampaignOptimization.FO) -> Tensor | None:
         self._pre_run(opt)
 
         # Decide optimization level
@@ -274,7 +274,11 @@ class Campaign:
         # Evaluate faults' effects
         with torch.no_grad():
             self.progress.timer()
-            evaluate_method(test_loader, error)
+            eval_args = (test_loader, error)
+            if opt.value >= CampaignOptimization.O3.value:
+                eval_args += (es_tol,)
+
+            N_critical = evaluate_method(*eval_args)
 
         self.progress.timer()
         self.duration = self.progress.get_duration_sec()
@@ -285,6 +289,8 @@ class Campaign:
         # Update fault rounds statistics
         for stats in self.performance:
             stats.update()
+
+        return N_critical
 
     def _pre_run(self, opt: CampaignOptimization) -> None:
         if not self.rounds:
@@ -407,14 +413,16 @@ class Campaign:
             with self.progress_lock:
                 self.progress.set_batch(b)
 
-    def _evaluate_optimized(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+    def _evaluate_optimized(self, test_loader: DataLoader, error: snn.loss = None, es_tol: int = 0) -> Tensor:
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
+        N_critical = torch.zeros(len(self.rounds), dtype=torch.int)
 
         for b, (_, input, target, label) in enumerate(test_loader):  # For each batch
             # Store golden spikes
             golden_spikes = [input.to(self.device)]
             for layer_idx in range(len(self.layers_info)):
                 golden_spikes.append(self.golden(golden_spikes[layer_idx], layer_idx, layer_idx))
+            golden_prediction = snn.predict.getClass(golden_spikes[-1])
 
             for round_group in self.rgroups.values():  # For each fault round group
                 for self.r_idx in round_group:  # For each fault round
@@ -429,8 +437,16 @@ class Campaign:
                     else:
                         # Early stop optimization
                         early_stop_next_out = self.faulty(golden_spikes[ls_idx], ls_idx, es_idx + 1)
-                        early_stop = torch.equal(early_stop_next_out, golden_spikes[es_idx + 2])
-                        output = golden_spikes[-1] if early_stop else self.faulty(early_stop_next_out, es_idx + 2)
+                        early_stop = torch.sum(early_stop_next_out.ne(golden_spikes[es_idx + 2]), dim=(1, 2, 3, 4)) <= es_tol
+
+                        # Replace output only for the affected samples of the batch
+                        output = torch.zeros(golden_spikes[-1].size()).to(self.device)
+                        output[early_stop] = golden_spikes[-1][early_stop]
+                        if torch.any(~early_stop):
+                            output[~early_stop] = self.faulty(early_stop_next_out[~early_stop], es_idx + 2)
+
+                    prediction = snn.predict.getClass(output)
+                    N_critical[self.r_idx] += torch.sum((golden_prediction == label) & (prediction != label))
 
                     self._advance_performance(self.performance[self.r_idx], output, target, label, error)
 
@@ -439,6 +455,8 @@ class Campaign:
 
             with self.progress_lock:
                 self.progress.set_batch(b)
+
+        return N_critical
 
     def _advance_performance(self, stats: spikeStats, output: Tensor, target: Tensor, label: Tensor, error: snn.loss = None) -> None:
         stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
