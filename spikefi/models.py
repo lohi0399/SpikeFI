@@ -69,12 +69,14 @@ class ParametricFaultModel(FaultModel):
     def is_param_perturbed(self) -> bool:
         return self.flayer is not None
 
-    def param_perturb(self, slayer: spikeLayer) -> None:
-        self.flayer = deepcopy(slayer)
-
-        self.param_original = self.flayer.neuron[self.param_name]
+    def param_perturb(self, slayer: spikeLayer, device: torch.device) -> None:
+        self.param_original = slayer.neuron[self.param_name]
         self.param_perturbed = self.param_method(self.param_original, *self.param_args)
-        self.flayer.neuron[self.param_name] = self.param_perturbed
+
+        dummy = deepcopy(slayer)
+        dummy.neuron[self.param_name] = self.param_perturbed
+
+        self.flayer = spikeLayer(dummy.neuron, dummy.simulation, fullRefKernel=True).to(device)
 
     def param_restore(self) -> None:
         self.flayer.neuron[self.param_name] = self.param_original

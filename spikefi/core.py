@@ -356,7 +356,7 @@ class Campaign:
                 if round.any_parametric(layer_name):
                     for fault in round.search_parametric(layer_name):
                         # Create parametric faults' dummy layers
-                        fault.model.param_perturb(self.slayer)
+                        fault.model.param_perturb(self.slayer, self.device)
 
                     if not self.handles[layer_name][ind_par][1]:
                         # Register parametric fault hooks
