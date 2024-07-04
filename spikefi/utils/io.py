@@ -23,20 +23,24 @@ def make_res_filepath(filename: str) -> str:
     return make_filepath(filename, RES_DIR)
 
 
-def calculate_trial(filename: str, parentdir: str) -> str:
-    split_fname = os.path.splitext(filename)
-    fnames = [f.removesuffix(split_fname[1]) for f in os.listdir(parentdir)
-              if split_fname[0] in f and f.endswith(split_fname[1])]
+def calculate_trial(filename: str, parentdir: str) -> int:
+    fname, extension = os.path.splitext(filename)
+    fnames = [f.removesuffix(extension) for f in os.listdir(parentdir)
+              if fname in f and f.endswith(extension)]
 
     if not fnames:
-        return ''
+        return 0
 
-    trial_matches = [re.search(r'\d+$', f) for f in fnames]
+    trial_matches = [re.search(r' \(\d+\)$', f) for f in fnames]
 
-    return str(max([int(m.group()) if m else 0 for m in trial_matches]) + 1)
+    return max([int(m.group().strip(' ()')) if m else 0 for m in trial_matches]) + 1
 
 
 def rename_if_multiple(filename: str, parentdir: str) -> str:
-    split_fname = os.path.splitext(filename)
+    t = calculate_trial(filename, parentdir)
+    if t == 0:
+        return filename
 
-    return split_fname[0] + calculate_trial(filename, parentdir) + split_fname[1]
+    fname, extension = os.path.splitext(filename)
+
+    return fname + f" ({t})" + extension

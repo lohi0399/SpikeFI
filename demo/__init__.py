@@ -71,12 +71,12 @@ trial_def = sfi.utils.io.calculate_trial(base_fname + '_.pt', OUT_DIR)
 
 
 def get_fnetname(trial: str = None) -> str:
-    return f"{base_fname}_net{trial if trial is not None else trial_def}.pt"
+    return f"{base_fname}_net{trial if trial else trial_def}.pt"
 
 
 def get_fstaname(trial: str = None) -> str:
-    return f"{base_fname}_stats{trial if trial is not None else trial_def}.pkl"
+    return f"{base_fname}_stats{trial if trial else trial_def}.pkl"
 
 
 def get_ffigname(trial: str = None) -> str:
-    return f"{base_fname}_train{trial if trial is not None else trial_def}.svg"
+    return f"{base_fname}_train{trial if trial else trial_def}.svg"
