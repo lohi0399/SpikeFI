@@ -1,6 +1,7 @@
-from math import sqrt, prod
+from difflib import SequenceMatcher
+from math import prod, sqrt
 import matplotlib
-import matplotlib.colorbar
+from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -12,22 +13,57 @@ from spikefi.utils.io import make_fig_filepath
 CMAP = 'jet'
 
 
-def _data_mapping(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel = None) -> dict[tuple[str, ff.FaultModel], list[int]]:
-    data_map: dict[tuple[str, ff.FaultModel], list[int]] = {}   # { (layer, fault model), [round index] }
+def _data_mapping(cmpns_data: list[CampaignData], layer: str = None,
+                  fault_model: ff.FaultModel = None) -> dict[tuple[str, ff.FaultModel], dict[int, list[int]]]:
+    data_map: dict[tuple[str, ff.FaultModel], dict[int, list[int]]] = {}   # { (layer, fault model): { campaign index, [round index] } }
 
-    for lay, r_idxs in cmpn_data.rgroups.items():
-        for r in r_idxs:
-            round = cmpn_data.rounds[r]
-            if len(round) > 1 or (layer and lay != layer):
-                continue
-            key = next(iter(round.keys()))
+    for cmpn_idx, cmpn_data in enumerate(cmpns_data):
+        for lay, r_idxs in cmpn_data.rgroups.items():
+            for r in r_idxs:
+                round = cmpn_data.rounds[r]
+                if len(round) > 1 or (layer and lay != layer):
+                    continue
+                key = next(iter(round.keys()))
 
-            if fault_model and fault_model not in key:
-                continue
+                if fault_model and fault_model not in key:
+                    continue
 
-            data_map.setdefault(key, [])
-            data_map[key].append(r)
+                data_map.setdefault(key, {})
+                data_map[key].setdefault(cmpn_idx, [])
+                data_map[key][cmpn_idx].append(r)
+
     return data_map
+
+
+def _title_plot(cmpns_data: list[CampaignData], data_map: dict,
+                model_friendly: str, plot_type: str, title_suffix: str, format: str) -> str:
+    title_def = ""
+
+    if len(data_map) == 1 and plot_type == "heat":
+        fm = next(iter(data_map.keys()))[1]
+        title_def = "_" + str(int(fm.args[0]))
+    elif len(data_map) > 1:
+        model = next(iter(data_map.keys()))[1]
+        one_m = True
+        for _, fm in data_map.keys():
+            one_m &= fm == model
+
+        if one_m:
+            title_def = "" if model_friendly else f"_{model.get_name()}{int(fm.args[0])}"
+        else:
+            title_def = "_comparative"
+
+    if model_friendly:
+        model_friendly = "_" + model_friendly.strip('_')
+    if title_suffix:
+        title_suffix = "_" + title_suffix.strip('_')
+
+    cmpn_name = cmpns_data[0].name
+    for cmpn_data in cmpns_data:
+        match = SequenceMatcher(None, cmpn_name, cmpn_data.name).find_longest_match()
+        cmpn_name = cmpn_name[match.a:match.a + match.size]
+
+    return f"{cmpn_name.strip('_')}{model_friendly or ''}{title_def}_{plot_type}{title_suffix or ''}.{format.strip('.')}"
 
 
 def _shape_square(N: int) -> tuple[int, int]:
@@ -38,14 +74,55 @@ def _shape_square(N: int) -> tuple[int, int]:
     return (x, int(N / x))
 
 
-# TODO visual.bar
-def bar() -> None:
-    pass
+def bar(cmpns_data: list[CampaignData],
+        model_friendly: str = None, title_suffix: str = None, format: str = 'svg') -> Figure:
+    data_map = _data_mapping(cmpns_data)
 
+    offset_mult: dict[str, int] = {}
+    layers = sorted(list(set(key[0] for key in data_map.keys())))
 
-# TODO visual.bar_comparative
-def bar_comparative() -> None:
-    pass
+    fig, ax = plt.subplots()
+    colormap = plt.get_cmap(CMAP)
+    width = 3 / len(data_map)
+    space = width / 5
+
+    for (lay, fm), cmpn_dict in data_map.items():
+        offset_mult.setdefault(lay, 0)
+
+        N = 0
+        perf = []
+        for cmpn_idx, r_idxs in cmpn_dict.items():
+            N += len(r_idxs)
+            for r in r_idxs:
+                test_stats = cmpns_data[cmpn_idx].performance[r].testing
+                perf.append(test_stats.maxAccuracy * 100.0)
+        perf = np.array(perf)
+
+        groups_freq = np.bincount(perf.round().astype(int), minlength=101)
+        groups_cent = groups_freq / N * 100.0
+
+        bottom = 0.0
+        for i in range(101):
+            offset = (width + space) * offset_mult[lay]
+            b = ax.bar(layers.index(lay) + offset, groups_cent[i], width,
+                       bottom=bottom, color=colormap(i/100.0))
+
+            bottom += groups_cent[i]
+
+        ax.bar_label(b, labels=[fm.get_name()[:4] + "."], rotation=90,
+                     color='white', padding=-30)
+
+        offset_mult[lay] += 1
+
+    ax.set_ylabel('Faults (%)')
+    ax.set_yticks(range(0, 101, 10))
+    ax.set_xlabel('Layers')
+    ax.set_xticks([i + (width/2 + space/2) * (offset_mult[lay]-1) for i, lay in enumerate(layers)], layers)
+
+    plot_path = make_fig_filepath(_title_plot(cmpns_data, data_map, model_friendly, "bar", title_suffix, format))
+    plt.savefig(plot_path, bbox_inches='tight', transparent=False)
+
+    return fig
 
 
 def colormap(format: str = 'svg') -> None:
@@ -63,20 +140,35 @@ def colormap(format: str = 'svg') -> None:
     plt.savefig(plot_path, transparent=True)
 
 
-def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel = None,
-         preserve_dim: bool = False, max_size: int = 512, title_suffix: str = None, format: str = 'svg') -> None:
-    heat_max = max_size**2
-    data_map = _data_mapping(cmpn_data, layer, fault_model)
-    for (lay, fm), r_idxs in data_map.items():
-        N = len(r_idxs)
-        if N > heat_max:
+def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.FaultModel = None,
+         preserve_dim: bool = False, max_area: int = 512**2, show_axes: bool = True,
+         model_friendly: str = None, title_suffix: str = None, format: str = 'svg') -> list[Figure]:
+    figs = []
+    data_map = _data_mapping(cmpns_data, layer, fault_model)
+    for (lay, fm), cmpn_dict in data_map.items():
+        N = 0
+        perf = []
+        local_cmpns_data = []
+        for cmpn_idx, r_idxs in cmpn_dict.items():
+            N += len(r_idxs)
+            local_cmpns_data.append(cmpns_data[cmpn_idx])
+
+            for r in r_idxs:
+                test_stats = cmpns_data[cmpn_idx].performance[r].testing
+                perf.append(test_stats.maxAccuracy)
+        perf = np.array(perf)
+
+        if N > max_area:
             print("Cannot plot heat map for the following layer - fault model pair:")
             print((lay, fm))
-            print(f"Reason: too many faults (>{heat_max}).")
+            print(f"Reason: too many faults (>{max_area}).")
             continue
 
         is_syn = fm.is_synaptic()
-        shape = cmpn_data.layers_info.shapes_syn[lay] if is_syn else cmpn_data.layers_info.shapes_neu[lay]
+        if is_syn:
+            shape = local_cmpns_data[0].layers_info.shapes_syn[lay]
+        else:
+            shape = local_cmpns_data[0].layers_info.shapes_neu[lay]
 
         if N != prod(shape):
             plot_shape = (1, N)
@@ -89,13 +181,8 @@ def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel 
             else:
                 plot_shape = (shape[1] * shape[2], shape[0])
 
-        if not preserve_dim or plot_shape[0] > sqrt(heat_max) or plot_shape[1] > sqrt(heat_max):
+        if not preserve_dim or plot_shape[0] > sqrt(max_area) or plot_shape[1] > sqrt(max_area):
             plot_shape = _shape_square(N)
-
-        perf = np.zeros(N)
-        for i, r in enumerate(r_idxs):
-            test_stats = cmpn_data.performance[r].testing
-            perf[i] = test_stats.maxAccuracy
 
         fig = plt.figure(str((lay, fm)))
 
@@ -118,10 +205,13 @@ def heat(cmpn_data: CampaignData, layer: str = None, fault_model: ff.FaultModel 
         pos.axes.tick_params(axis='both', which='both', length=0)
         pos.axes.grid(which='both', linestyle='-')
 
-        if title_suffix is None and len(data_map) > 1:
-            title_suffix = f"_{lay}_{fm.get_name()}{int(fm.args[0])}"
-        elif title_suffix:
-            title_suffix = "_" + title_suffix
-        plot_path = make_fig_filepath(filename=f"{cmpn_data.name}_heat{title_suffix or ''}.{format.removeprefix('.')}")
+        if not show_axes:
+            pos.axes.set_xticklabels([])
+            pos.axes.set_yticklabels([])
 
+        plot_path = make_fig_filepath(_title_plot(local_cmpns_data, {(lay, fm): cmpn_dict}, model_friendly, "heat", title_suffix, format))
         plt.savefig(plot_path, bbox_inches='tight', transparent=False)
+
+        figs.append(fig)
+
+    return figs

@@ -1,6 +1,7 @@
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from enum import Enum
+from glob import glob
 from itertools import product
 import os
 import pickle
@@ -471,8 +472,12 @@ class Campaign:
         self.export().save(fname)
 
     @staticmethod
-    def load(fname: str) -> 'Campaign':
-        return CampaignData.load(fname).build()
+    def load(filename: str) -> 'Campaign':
+        return CampaignData.load(filename).build()
+
+    @staticmethod
+    def load_many(pathname: str) -> list['Campaign']:
+        return CampaignData.load_many(pathname).build()
 
     @staticmethod
     def _forward_opt_wrapper(layers_info: LayersInfo, slayer: spikeLayer) -> Callable[[Tensor, Optional[int], Optional[int]], Tensor]:
@@ -587,6 +592,15 @@ class CampaignData:
             pickle.dump(self, pkl)
 
     @staticmethod
-    def load(fname: str) -> 'CampaignData':
-        with open(fname, 'rb') as pkl:
+    def load(filename: str) -> 'CampaignData':
+        with open(filename, 'rb') as pkl:
             return pickle.load(pkl)
+
+    @staticmethod
+    def load_many(pathname: str) -> list['CampaignData']:
+        tore = []
+        for f in glob(pathname):
+            with open(f, 'rb') as pkl:
+                tore.append(pickle.load(pkl))
+
+        return tore
