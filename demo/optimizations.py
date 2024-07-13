@@ -17,7 +17,7 @@ K = [30]  # 1, 2, 4, 6, 8, 10, 15, 20, 30, 40, 50, 100, 150, 200, 300, 500
 O = [3]  # noqa E741
 T = range(71)
 
-fnetname = cs.get_fnetname(trial='2')
+fnetname = cs.get_fnetname()
 net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.CASE_STUDY, fnetname))
 net.eval()
 

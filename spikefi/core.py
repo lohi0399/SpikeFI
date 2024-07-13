@@ -49,7 +49,7 @@ class Campaign:
         self.golden.eval()
         self.faulty = None
         self.slayer = slayer
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
         self.layers_info = LayersInfo(shape_in)
         self.infer_layers_info()
