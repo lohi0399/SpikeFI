@@ -15,8 +15,9 @@ fnetname = cs.get_fnetname(trial='4')
 net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.CASE_STUDY, fnetname))
 net.eval()
 
-for lay_name in L:
-    for param in P:
+cmpns_data = []
+for param in P:
+    for lay_name in L:
         for c in C:
             cmpn_name = fnetname.removesuffix('.pt') + f"_neuron_{param}_{lay_name or 'ALL'}_c{c}"
             cmpn = sfi.Campaign(net, cs.shape_in, net.slayer, name=cmpn_name)
@@ -27,4 +28,7 @@ for lay_name in L:
             cmpn.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn.device))
             print(f"{cmpn.duration : .2f} secs")
 
+            cmpns_data.append(cmpn.export())
             cmpn.save()
+
+    sfi.visual.plot(cmpns_data, xlabel=f'{param} (% of nominal value)', format='png')

@@ -1,6 +1,8 @@
+from cycler import cycler
 from difflib import SequenceMatcher
+from itertools import cycle
 from math import prod, sqrt
-import matplotlib
+import matplotlib as mpl
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,8 +37,22 @@ def _data_mapping(cmpns_data: list[CampaignData], layer: str = None,
     return data_map
 
 
-def _title_plot(cmpns_data: list[CampaignData], data_map: dict,
-                model_friendly: str, plot_type: str, title_suffix: str, format: str) -> str:
+def _earth_palette() -> None:
+    mpl.rcParams['axes.prop_cycle'] = cycler('color', [
+        "#02580E", "#9C7720", "#104280", "#B7312C", "#DC996C", "#5F1B08", "#FFD19E"
+        ])
+
+
+def _shape_square(N: int) -> tuple[int, int]:
+    x = int(sqrt(N))
+    while N % x != 0:
+        x -= 1
+
+    return (x, int(N / x))
+
+
+def _title(cmpns_data: list[CampaignData], data_map: dict,
+           model_friendly: str, plot_type: str, title_suffix: str, format: str) -> str:
     title_def = ""
 
     if len(data_map) == 1 and plot_type == "heat":
@@ -64,14 +80,6 @@ def _title_plot(cmpns_data: list[CampaignData], data_map: dict,
         cmpn_name = cmpn_name[match.a:match.a + match.size]
 
     return f"{cmpn_name.strip('_')}{model_friendly or ''}{title_def}_{plot_type}{title_suffix or ''}.{format.strip('.')}"
-
-
-def _shape_square(N: int) -> tuple[int, int]:
-    x = int(sqrt(N))
-    while N % x != 0:
-        x -= 1
-
-    return (x, int(N / x))
 
 
 def bar(cmpns_data: list[CampaignData],
@@ -121,7 +129,7 @@ def bar(cmpns_data: list[CampaignData],
     ax.set_xlabel('Layers')
     ax.set_xticks([i + (width/2 + space/2) * (offset_mult[lay]-1) for i, lay in enumerate(layers)], layers)
 
-    plot_path = make_fig_filepath(_title_plot(cmpns_data, data_map, model_friendly, "bar", title_suffix, format))
+    plot_path = make_fig_filepath(_title(cmpns_data, data_map, model_friendly, "bar", title_suffix, format))
     plt.savefig(plot_path, bbox_inches='tight', transparent=False)
 
     return fig
@@ -132,9 +140,9 @@ def colormap(format: str = 'svg') -> None:
     fig.set_size_inches(fig.get_figwidth(), 1)
 
     cax = fig.add_axes([.05, .55, .9, .25])
-    norm = matplotlib.colors.Normalize(0, 100)
+    norm = mpl.colors.Normalize(0, 100)
 
-    cbar = matplotlib.colorbar.Colorbar(cax, cmap=CMAP, norm=norm, orientation='horizontal', ticks=range(0, 101, 10))
+    cbar = mpl.colorbar.Colorbar(cax, cmap=CMAP, norm=norm, orientation='horizontal', ticks=range(0, 101, 10))
     cbar.set_ticks(range(0, 100), minor=True)
     plt.xlabel("Classification Accuracy (%)")
 
@@ -212,9 +220,65 @@ def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.Faul
             pos.axes.set_xticklabels([])
             pos.axes.set_yticklabels([])
 
-        plot_path = make_fig_filepath(_title_plot(local_cmpns_data, {(lay, fm): cmpn_dict}, model_friendly, "heat", title_suffix, format))
+        plot_path = make_fig_filepath(_title(local_cmpns_data, {(lay, fm): cmpn_dict}, model_friendly, "heat", title_suffix, format))
         plt.savefig(plot_path, bbox_inches='tight', transparent=False)
 
         figs.append(fig)
 
     return figs
+
+
+def plot(cmpns_data: list[CampaignData], xlabel: str = '', layer: str = None,
+         model_friendly: str = None, fig_size: tuple[float, float] = (8, 4),
+         title_suffix: str = None, format: str = 'svg') -> Figure:
+    data_map = _data_mapping(cmpns_data, layer)
+    data_map_sorted = dict(sorted(data_map.items(), key=lambda item: item[0][0]))
+    curves: dict[str, list[tuple[float, np.array[float]]]] = {}
+
+    for (lay, fm), cmpn_dict in data_map_sorted.items():
+        curves.setdefault(lay, [])
+        perf = []
+        for cmpn_idx, r_idxs in cmpn_dict.items():
+            for r in r_idxs:
+                test_stats = cmpns_data[cmpn_idx].performance[r].testing
+                perf.append(test_stats.maxAccuracy)
+
+        a = fm.param_args[0] * 100. if fm.is_parametric() else fm.args[0]
+        curves[lay].append((a, np.array(perf) * 100.))
+
+    fig = plt.figure(figsize=fig_size)
+    markers = cycle(["D", "s", "*", "X", "p", "^"])
+    _earth_palette()
+
+    for lay in curves.keys():
+        curves[lay].sort(key=lambda tup: tup[0])
+
+        x, y, y_l, y_h = [], [], [], []
+        for pair in curves[lay]:
+            x.append(pair[0])
+            y.append(pair[1].mean())
+            y_l.append(pair[1].min())
+            y_h.append(pair[1].max())
+
+        plt.fill_between(x, y_h, y_l, alpha=0.2)
+        plt.plot(x, y, marker=next(markers), label=lay)
+
+        plt.ylim((0, 100))
+        plt.yticks(range(0, 101, 10))
+        plt.ylabel('Classification accuracy (%)')
+
+        plt.xlim(np.min(x), np.max(x))
+        if np.min(x) not in list(plt.xticks()[0]):
+            plt.xticks(list(plt.xticks()[0]) + [np.min(x)])
+        plt.xlabel(xlabel)
+
+        plt.minorticks_on()
+        plt.grid(visible=True, which='major', axis='y', alpha=0.5)
+        plt.grid(visible=True, which='minor', axis='y', linestyle='dotted')
+
+    plt.legend(loc="lower right")
+
+    plot_path = make_fig_filepath(_title(cmpns_data, data_map, model_friendly, "scatter", title_suffix, format))
+    plt.savefig(plot_path, bbox_inches='tight', transparent=False)
+
+    return fig
