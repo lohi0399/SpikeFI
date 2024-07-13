@@ -75,13 +75,15 @@ def _shape_square(N: int) -> tuple[int, int]:
 
 
 def bar(cmpns_data: list[CampaignData],
-        model_friendly: str = None, title_suffix: str = None, format: str = 'svg') -> Figure:
+        model_friendly: str = None, fig_size: tuple[float, float] = (8, 6),
+        title_suffix: str = None, format: str = 'svg') -> Figure:
     data_map = _data_mapping(cmpns_data)
 
     offset_mult: dict[str, int] = {}
     layers = sorted(list(set(key[0] for key in data_map.keys())))
 
     fig, ax = plt.subplots()
+    fig.set_size_inches(fig_size)
     colormap = plt.get_cmap(CMAP)
     width = 3 / len(data_map)
     space = width / 5
@@ -142,7 +144,8 @@ def colormap(format: str = 'svg') -> None:
 
 def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.FaultModel = None,
          preserve_dim: bool = False, max_area: int = 512**2, show_axes: bool = True,
-         model_friendly: str = None, title_suffix: str = None, format: str = 'svg') -> list[Figure]:
+         model_friendly: str = None, fig_size: tuple[float, float] = (8, 4),
+         title_suffix: str = None, format: str = 'svg') -> list[Figure]:
     figs = []
     data_map = _data_mapping(cmpns_data, layer, fault_model)
     for (lay, fm), cmpn_dict in data_map.items():
@@ -184,7 +187,7 @@ def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.Faul
         if not preserve_dim or plot_shape[0] > sqrt(max_area) or plot_shape[1] > sqrt(max_area):
             plot_shape = _shape_square(N)
 
-        fig = plt.figure(str((lay, fm)))
+        fig = plt.figure(str((lay, fm)), figsize=fig_size)
 
         hx = int(plot_shape[0] / 100.) + 1
         wx = int(plot_shape[1] / 100.) + 1
