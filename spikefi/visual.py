@@ -83,7 +83,7 @@ def _title(cmpns_data: list[CampaignData], data_map: dict,
 
 
 def bar(cmpns_data: list[CampaignData],
-        model_friendly: str = None, fig_size: tuple[float, float] = (8, 6),
+        model_friendly: str = None, fig_size: tuple[float, float] = None,
         title_suffix: str = None, format: str = 'svg') -> Figure:
     data_map = _data_mapping(cmpns_data)
 
@@ -152,7 +152,7 @@ def colormap(format: str = 'svg') -> None:
 
 def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.FaultModel = None,
          preserve_dim: bool = False, max_area: int = 512**2, show_axes: bool = True,
-         model_friendly: str = None, fig_size: tuple[float, float] = (8, 4),
+         model_friendly: str = None, fig_size: tuple[float, float] = None,
          title_suffix: str = None, format: str = 'svg') -> list[Figure]:
     figs = []
     data_map = _data_mapping(cmpns_data, layer, fault_model)
@@ -229,7 +229,7 @@ def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.Faul
 
 
 def plot(cmpns_data: list[CampaignData], xlabel: str = '', layer: str = None,
-         model_friendly: str = None, fig_size: tuple[float, float] = (8, 4),
+         model_friendly: str = None, fig_size: tuple[float, float] = None,
          title_suffix: str = None, format: str = 'svg') -> Figure:
     data_map = _data_mapping(cmpns_data, layer)
     data_map_sorted = dict(sorted(data_map.items(), key=lambda item: item[0][0]))
