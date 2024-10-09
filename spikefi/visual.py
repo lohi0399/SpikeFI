@@ -6,6 +6,7 @@ import matplotlib as mpl
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 from spikefi.core import CampaignData
 import spikefi.fault as ff
@@ -282,3 +283,36 @@ def plot(cmpns_data: list[CampaignData], xlabel: str = '', layer: str = None,
     plt.savefig(plot_path, bbox_inches='tight', transparent=False)
 
     return fig
+
+
+def learning_curve(cmpns_data: list[CampaignData], fig_size: tuple[float, float] = None, 
+                   title_suffix: str = None, format: str = 'svg') -> None:
+    figs = list()
+
+    for cmpn_data in cmpns_data:
+        for r, perf in enumerate(cmpn_data.performance):
+            epochs = len(perf.training.accuracyLog)
+            fig = plt.figure(r, figsize=fig_size)
+
+            plt.plot(range(1, epochs + 1), torch.Tensor(perf.training.accuracyLog) * 100., 'b--', label='Training')
+            if all(accu for accu in perf.testing.accuracyLog):
+                plt.plot(range(1, epochs + 1), torch.Tensor(perf.testing.accuracyLog) * 100., 'g-', label='Testing')
+
+            plt.grid(visible=True, which='both', axis='both')
+            plt.legend(loc='lower right')
+
+            plt.xlabel('Epoch #')
+            plt.ylabel('Accuracy (%)')
+            plt.xticks(ticks=[1] + list(range(10, epochs + 1, 10)))
+            plt.xticks(ticks=range(2, epochs + 1, 2), minor=True)
+            plt.yticks(ticks=range(0, 101, 10))
+            plt.yticks(ticks=range(0, 100, 2), minor=True)
+            plt.xlim((1, epochs))
+            plt.ylim((0., 100.))
+
+            if title_suffix:
+                title_suffix = "_" + title_suffix.strip('_')
+            plot_path = make_fig_filepath(f"{cmpn_data.name}_learning{title_suffix or ''}.{format.strip('.')}")
+            plt.savefig(plot_path, bbox_inches='tight', transparent=False)
+
+            figs.append(fig)

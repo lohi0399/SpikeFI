@@ -13,6 +13,7 @@ from warnings import warn
 
 import torch
 from torch import nn, Tensor
+from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.hooks import RemovableHandle
 
@@ -27,7 +28,7 @@ from spikefi.utils.progress import CampaignProgress, refresh_progress_job
 
 
 # TODO: Fix long lines
-# TODO: Logging (in methods that might take a long time based on the rounds number, e.g., in _pre_run)
+# TODO: Logging
 # TODO: Parallelize fault rounds evaluation
 
 
@@ -117,32 +118,34 @@ class Campaign:
         if not isinstance(faults, Iterable):
             raise TypeError(f"'{type(faults).__name__}' object is not iterable")
 
-        has_site_duplicates = False
         for f in faults:
             is_syn = f.model.is_synaptic()
 
-            for s in f.sites_pending:
-                if not s.layer:
-                    s.layer = random.choice(self.layers_info.get_injectables())
+            while not f.is_complete():
+                s = next(iter(f.sites_pending))
 
-                shape = self.layers_info.get_shapes(is_syn, s.layer)
+                # Make sure that each random site of a multiple fault is unique
+                is_duplicate = True
+                while is_duplicate:
+                    lay = s.layer or random.choice(self.layers_info.get_injectables())
 
-                pos = list(s.position)
-                if pos[0] is None:
-                    pos[0] = random.randrange(shape[0]) if is_syn else slice(None)
+                    shape = self.layers_info.get_shapes(is_syn, lay)
+                    pos = list(s.position)
+                    if pos[0] is None:
+                        pos[0] = random.randrange(shape[0]) if is_syn else slice(None)
 
-                for i in range(1, 4):
-                    if pos[i] is None:
-                        si = i - (not is_syn)
-                        pos[i] = random.randrange(shape[si])
+                    for i in range(1, 4):
+                        if pos[i] is None:
+                            si = i - (not is_syn)
+                            pos[i] = random.randrange(shape[si])
 
+                    s_new = ff.FaultSite(lay, tuple(pos))
+                    is_duplicate = f.has_site(s_new)
+
+                s.layer = lay
                 s.position = tuple(pos)
 
-            f.refresh(discard_duplicates=False)
-            has_site_duplicates |= bool(f.sites_pending)
-
-        if has_site_duplicates:
-            print('Some of the newly defined random fault sites already exist.')
+                f.refresh()
 
         return faults
 
@@ -251,7 +254,83 @@ class Campaign:
         if not self.rounds:
             self.rounds.append(ff.FaultRound())
 
-    def run(self, test_loader: DataLoader, error: snn.loss = None, es_tol: int = 0,
+    def reset(self) -> None:
+        if not self.rounds:
+            self.rounds = [ff.FaultRound()]
+
+        # Reset fault round variables
+        self.r_idx = 0
+        self.orounds.clear()
+        self.rgroups.clear()
+        self.handles.clear()
+        self.performance.clear()
+
+        # Create faulty version of network
+        self.faulty = deepcopy(self.golden)
+        self.faulty.forward = MethodType(Campaign._forward_opt_wrapper(self.layers_info, self.slayer), self.faulty)
+
+    def run_train(self, epochs: int, train_loader: DataLoader,
+                  optimizer: Optimizer, spike_loss: snn.loss) -> list[nn.Module]:
+        # Initialize and refresh progress
+        self.progress = CampaignProgress(len(train_loader), len(self.rounds), epochs)
+        self.progress_lock = Lock()
+        self.progress_thread = Thread(target=refresh_progress_job, args=(self.progress, 1,), daemon=True)
+        self.progress_thread.start()
+
+        self.faulties = self._pre_run_train()
+
+        self.progress.timer()
+        for self.r_idx, faulty in enumerate(self.faulties):
+            self._evaluate_train(faulty, epochs, train_loader, optimizer, spike_loss)
+        self.progress.timer()
+
+        self._post_run(update_stats=False)
+
+        return self.faulties
+
+    def _pre_run_train(self) -> list[nn.Module]:
+        self.reset()
+        faulties = []
+
+        for round in self.rounds:
+            _faulty = deepcopy(self.faulty)
+            faulties.append(_faulty)
+            self.performance.append(spikeStats())
+
+            # Register neuron faults (pre-)hooks
+            for layer_name in self.layers_info.get_injectables():
+                layer = getattr(_faulty, layer_name)
+
+                if not round.any_neuronal(layer_name):
+                    # Synaptic faults are (re-)inserted at the beggining of every training epoch
+                    continue
+
+                if not self.layers_info.is_output(layer_name):
+                    following_layer = getattr(_faulty, self.layers_info.get_following(layer_name))
+
+                    # Register neuron fault pre-hooks
+                    pre_hook = self._neuron_pre_hook_wrapper(layer_name, faults=round.search_neuronal(layer_name))
+                    following_layer.register_forward_pre_hook(pre_hook)
+                else:
+                    out_layer = getattr(_faulty, self.layers_info.get_injectables()[-1])
+
+                    # Register neuron fault hook for output layer only
+                    hook = self._neuron_out_hook_wrapper(layer_name, faults=round.search_neuronal(layer_name))
+                    out_layer.register_forward_hook(hook)
+
+                # Parametric faults (subset of neuronal faults)
+                if round.any_parametric(layer_name):
+                    for fault in round.search_parametric(layer_name):
+                        # Create parametric faults' dummy layers
+                        fault.model.param_perturb(self.slayer, self.device)
+
+                    # Register parametric fault hooks
+                    hook = self._parametric_hook_wrapper(layer_name, faults=round.search_parametric(layer_name))
+                    layer.register_forward_hook(hook)
+
+        return faulties
+
+    def run(self, test_loader: DataLoader, spike_loss: snn.loss = None, es_tol: int = 0,
             opt: CampaignOptimization = CampaignOptimization.FO) -> Tensor | None:
         self._pre_run(opt)
 
@@ -269,52 +348,28 @@ class Campaign:
         # Initialize and refresh progress
         self.progress = CampaignProgress(len(test_loader), len(self.rounds))
         self.progress_lock = Lock()
-        progress_thread = Thread(target=refresh_progress_job, args=(self.progress, 1,), daemon=True)
-        progress_thread.start()
+        self.progress_thread = Thread(target=refresh_progress_job, args=(self.progress, 1,), daemon=True)
+        self.progress_thread.start()
 
         # Evaluate faults' effects
         with torch.no_grad():
-            self.progress.timer()
-            eval_args = (test_loader, error)
+            eval_args = (test_loader, spike_loss)
             if opt.value >= CampaignOptimization.O3.value:
                 eval_args += (es_tol,)
 
+            self.progress.timer()
             N_critical = evaluate_method(*eval_args)
+            self.progress.timer()
 
-        self.progress.timer()
-        self.duration = self.progress.get_duration_sec()
-
-        progress_thread.join()
-        del self.progress_lock
-
-        # Update fault rounds statistics
-        for stats in self.performance:
-            stats.update()
+        self._post_run()
 
         return N_critical
 
     def _pre_run(self, opt: CampaignOptimization) -> None:
-        if not self.rounds:
-            self.rounds = [ff.FaultRound()]
-
-        # Reset fault round variables
-        self.r_idx = 0
-        self.orounds.clear()
-        self.rgroups.clear()
-        self.handles.clear()
-        self.performance.clear()
+        self.reset()
 
         late_start_en = opt == CampaignOptimization.LS or opt == CampaignOptimization.FO
         early_stop_en = opt == CampaignOptimization.ES or opt == CampaignOptimization.FO
-
-        # No need to remove the hook handles, as in each run a new copy of the golden net is created and used
-        # for handle in self.handles:
-        #     if isinstance(handle, RemovableHandle):
-        #         handle.remove()
-
-        # Create faulty version of network
-        self.faulty = deepcopy(self.golden)
-        self.faulty.forward = MethodType(Campaign._forward_opt_wrapper(self.layers_info, self.slayer), self.faulty)
 
         for r, round in enumerate(self.rounds):
             # Create optimized fault rounds from rounds
@@ -325,13 +380,13 @@ class Campaign:
             self.rgroups.setdefault(oround.late_start_name, list())
             self.rgroups[oround.late_start_name].append(r)
 
-            # Create faulty network instances for fault rounds
+            # Register fault (pre-)hooks for all fault rounds
             self._perturb_net(oround)
 
             # Create statistics for fault rounds
             self.performance.append(spikeStats())
 
-        # Sort fault round goups in ascending order of group earliest layer
+        # Sort fault round goups in ascending order of group's earliest layer
         self.rgroups = dict(sorted(self.rgroups.items(), key=lambda item: -1 if item[0] is None else self.layers_info.index(item[0])))
 
     def _perturb_net(self, round: ff.FaultRound) -> None:
@@ -374,30 +429,100 @@ class Campaign:
                 hook = self._synaptic_hook_wrapper(layer_name)
                 self.handles[layer_name][ind_syn][1] = layer.register_forward_hook(hook)
 
-    def _evaluate_single(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+    def _post_run(self, update_stats: bool = True):
+        self.duration = self.progress.get_duration_sec()
+
+        self.progress_thread.join()
+        del self.progress_lock
+        del self.progress_thread
+
+        # Update fault rounds statistics
+        if update_stats:
+            for stats in self.performance:
+                stats.update()
+
+    def _evaluate_train(self, faulty: nn.Module, epochs: int, train_loader: DataLoader, optimizer: Optimizer, spike_loss: snn.loss) -> None:
+        stat = self.performance[self.r_idx].training
+
+        # Create a new optimizer for network to be trained using the provided optimizer type and parameters
+        optimizer_class = type(optimizer)
+        optimizer_params = {k: v for param_group in optimizer.param_groups for k, v in param_group.items() if k != 'params'}
+        optimizer_ = optimizer_class(faulty.parameters(), **optimizer_params)
+
+        # Register synaptic pre-hooks
+        syn_handles = {}
+        syn_faults = self.rounds[self.r_idx].get_synaptic()
+        if syn_faults:
+            for site in [site for fault in syn_faults for site in fault.sites]:
+                if syn_handles.get(site.layer):
+                    continue
+                layer = getattr(faulty, site.layer)
+                pre_hook = self._synaptic_pre_hook_wrapper(site.layer, syn_faults)
+                syn_handles[site.layer] = layer.register_forward_pre_hook(pre_hook)
+
+        with self.progress_lock:
+            self.progress.reset_epoch()
+
+        for _ in range(epochs):
+            faulty.train()
+            for _, (_, input, target, label) in enumerate(train_loader):
+                target = target.to(self.device)
+                output = faulty.forward(input.to(self.device))
+
+                loss = spike_loss.numSpikes(output, target)
+                optimizer_.zero_grad()
+                loss.backward()
+                optimizer_.step()
+
+                self._advance_performance(output, target, label, spike_loss, training=True)
+
+                with self.progress_lock:
+                    self.progress.step()
+                    self.progress.step_batch()
+                    self.progress.set_train(stat.loss(), stat.accuracy())
+
+            with self.progress_lock:
+                self.progress.step_epoch()
+
+            self.performance[self.r_idx].update()
+
+            # Keep the best network based on the max testing accuracy (needs to include the testing loop)
+            # if stats.testing.accuracyLog[-1] == stats.testing.maxAccuracy:
+            #   self.save_faulty(faulty, "faulty_temp.pt")
+        # os.remove("faulty_temp.pt")
+
+        # Final set of the faulty synapses & synaptic pre-hooks removal
+        if syn_faults:
+            faulty.forward(input.to(self.device))
+            for handle in syn_handles.values():
+                handle.remove()
+
+        faulty.eval()
+
+    def _evaluate_single(self, test_loader: DataLoader, spike_loss: snn.loss = None) -> None:
         is_out_faulty = self.orounds[self.r_idx].is_out_faulty
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
 
-        for b, (_, input, target, label) in enumerate(test_loader):
+        for _, (_, input, target, label) in enumerate(test_loader):
             output = self.faulty(input.to(self.device))
             if is_out_faulty:
                 out_neuron_callable(None, (output,))
 
-            self._advance_performance(self.performance[self.r_idx], output, target, label, error)
+            self._advance_performance(output, target.to(self.device), label, spike_loss)
 
             with self.progress_lock:
                 self.progress.step()
-                self.progress.set_batch(b)
+                self.progress.step_batch()
 
-    def _evaluate_O0(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+    def _evaluate_O0(self, test_loader: DataLoader, spike_loss: snn.loss = None) -> None:
         for round_group in self.rgroups.values():  # For each fault round group
             for self.r_idx in round_group:  # For each fault round
-                self._evaluate_single(test_loader, error)
+                self._evaluate_single(test_loader, spike_loss)
 
-    def _evaluate_O1(self, test_loader: DataLoader, error: snn.loss = None) -> None:
+    def _evaluate_O1(self, test_loader: DataLoader, spike_loss: snn.loss = None) -> None:
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
 
-        for b, (_, input, target, label) in enumerate(test_loader):  # For each batch
+        for _, (_, input, target, label) in enumerate(test_loader):  # For each batch
             for round_group in self.rgroups.values():  # For each fault round group
                 for self.r_idx in round_group:  # For each fault round
                     oround = self.orounds[self.r_idx]
@@ -406,19 +531,19 @@ class Campaign:
                     if oround.is_out_faulty:
                         out_neuron_callable(None, (output,))
 
-                    self._advance_performance(self.performance[self.r_idx], output, target, label, error)
+                    self._advance_performance(output, target.to(self.device), label, spike_loss)
 
                     with self.progress_lock:
                         self.progress.step()
 
             with self.progress_lock:
-                self.progress.set_batch(b)
+                self.progress.step_batch()
 
-    def _evaluate_optimized(self, test_loader: DataLoader, error: snn.loss = None, es_tol: int = 0) -> Tensor:
+    def _evaluate_optimized(self, test_loader: DataLoader, spike_loss: snn.loss = None, es_tol: int = 0) -> Tensor:
         out_neuron_callable = self._neuron_pre_hook_wrapper(self.layers_info.order[-1])
         N_critical = torch.zeros(len(self.rounds), dtype=torch.int)
 
-        for b, (_, input, target, label) in enumerate(test_loader):  # For each batch
+        for _, (_, input, target, label) in enumerate(test_loader):  # For each batch
             # Store golden spikes
             golden_spikes = [input.to(self.device)]
             for layer_idx in range(len(self.layers_info)):
@@ -449,27 +574,41 @@ class Campaign:
                     prediction = snn.predict.getClass(output)
                     N_critical[self.r_idx] += torch.sum((golden_prediction == label) & (prediction != label))
 
-                    self._advance_performance(self.performance[self.r_idx], output, target, label, error)
+                    self._advance_performance(output, target.to(self.device), label, spike_loss)
 
                     with self.progress_lock:
                         self.progress.step()
 
             with self.progress_lock:
-                self.progress.set_batch(b)
+                self.progress.step_batch()
 
         return N_critical
 
-    def _advance_performance(self, stats: spikeStats, output: Tensor, target: Tensor, label: Tensor, error: snn.loss = None) -> None:
-        stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
-        stats.testing.numSamples += len(label)
-        if error:
-            stats.testing.lossSum += error.numSpikes(output, target.to(self.device)).cpu().item()
+    def _advance_performance(self, output: Tensor, target: Tensor, label: Tensor, spike_loss: snn.loss = None, training: bool = False) -> None:
+        perf = self.performance[self.r_idx]
+        stat = perf.training if training else perf.testing
+
+        stat.correctSamples += torch.sum(snn.predict.getClass(output) == label).item()
+        stat.numSamples += len(label)
+        if spike_loss:
+            stat.lossSum += spike_loss.numSpikes(output, target).cpu().item()
 
     def export(self) -> 'CampaignData':
         return CampaignData(VERSION, self)
 
     def save(self, fname: str = None) -> None:
         self.export().save(fname)
+
+    def save_faulty(self, net: nn.Module = None, fname: str = None) -> None:
+        faulty = net or self.faulty
+        if not faulty:
+            return
+
+        if not fname:
+            def_fname = sfi_io.rename_if_multiple(self.name + '.pt', sfi_io.RES_DIR)
+            def_fpath = os.path.join(sfi_io.RES_DIR, def_fname)
+
+        torch.save(faulty, def_fpath)
 
     @staticmethod
     def load(filename: str) -> 'Campaign':
@@ -500,22 +639,34 @@ class Campaign:
 
         return forward_opt
 
-    def _neuron_pre_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, tuple[Tensor, ...]], None]:
+    def _neuron_pre_hook_wrapper(self, layer_name: str, faults: list[ff.Fault] = None) -> Callable[[nn.Module, tuple[Tensor, ...]], None]:
+        lay_shape_neu = self.layers_info.shapes_neu[layer_name]
+
         def neuron_pre_hook(_, args: tuple[Tensor, ...]) -> None:
             prev_spikes_out = args[0]
-            if prev_spikes_out.shape[1:4] != self.layers_info.shapes_neu[layer_name]:
+            if prev_spikes_out.shape[1:4] != lay_shape_neu:
                 return
 
-            for fault in self.orounds[self.r_idx].search_neuronal(layer_name):
+            for fault in faults or self.orounds[self.r_idx].search_neuronal(layer_name):
                 for site in fault.sites:
                     ind = site.unroll()
                     prev_spikes_out[ind] = fault.model.perturb(prev_spikes_out[ind], site)
 
         return neuron_pre_hook
 
-    def _parametric_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, tuple[Tensor, ...], Tensor], None]:
+    def _neuron_out_hook_wrapper(self, out_layer_name: str, faults: list[ff.Fault] = None) -> Callable[[nn.Module, tuple[Tensor, ...]], None]:
+        # Used in train mode only
+        def neuron_out_hook(_, __, spikes_out: Tensor) -> None:
+            for fault in faults or self.orounds[self.r_idx].search_neuronal(out_layer_name):
+                for site in fault.sites:
+                    ind = site.unroll()
+                    spikes_out[ind] = fault.model.perturb(spikes_out[ind], site)
+
+        return neuron_out_hook
+
+    def _parametric_hook_wrapper(self, layer_name: str, faults: list[ff.Fault] = None) -> Callable[[nn.Module, tuple[Tensor, ...], Tensor], None]:
         def parametric_hook(_, __, spikes_out: Tensor) -> None:
-            for fault in self.orounds[self.r_idx].search_parametric(layer_name):
+            for fault in faults or self.orounds[self.r_idx].search_parametric(layer_name):
                 flayer = fault.model.flayer
                 fspike_out = flayer.spike(flayer.psp(spikes_out))
 
@@ -525,9 +676,9 @@ class Campaign:
         return parametric_hook
 
     # Perturb weights for layer's synapse faults
-    def _synaptic_pre_hook_wrapper(self, layer_name: str) -> Callable[[nn.Module, tuple[Tensor, ...]], None]:
+    def _synaptic_pre_hook_wrapper(self, layer_name: str, faults: list[ff.Fault] = None) -> Callable[[nn.Module, tuple[Tensor, ...]], None]:
         def synaptic_pre_hook(layer: nn.Module, _) -> None:
-            for fault in self.orounds[self.r_idx].search_synaptic(layer_name):
+            for fault in faults or self.orounds[self.r_idx].search_synaptic(layer_name):
                 for site in fault.sites:
                     ind = site.unroll()
                     with torch.no_grad():

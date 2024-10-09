@@ -27,7 +27,7 @@ for lay_name in L:
                              [lay_name], fault_sampling_k=250**2)
 
         print(cmpn.name)
-        cmpn.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn.device))
+        cmpn.run(cs.test_loader, spike_loss=snn.loss(cs.net_params).to(cmpn.device))
         print(f"{cmpn.duration : .2f} secs")
 
         sfi.visual.heat(cmpn.export(), preserve_dim=True, format='png')

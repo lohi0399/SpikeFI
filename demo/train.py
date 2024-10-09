@@ -1,88 +1,48 @@
-from datetime import datetime
-import matplotlib.pyplot as plt
-import os
-import pickle
+import numpy as np
 import torch
 
 import slayerSNN as snn
 
+import spikefi as sfi
 import demo as cs
 
-EPOCHS_NUM = 200
+
+EPOCHS_NUM = 20
+C_START = 5
+C_STOP = 35
+C_STEP = 5
+
+fm_type = sfi.fm.DeadNeuron
+fm_name = "neuron_dead"
 
 # Generalized network/dataset initialization
 device = torch.device('cuda')
 net = cs.Network(cs.net_params, cs.DO_ENABLED).to(device)
-trial = cs.trial_def
 
-error = snn.loss(cs.net_params).to(device)
+spike_loss = snn.loss(cs.net_params).to(device)
 optimizer = torch.optim.Adam(net.parameters(), lr=1e-3, amsgrad=True)
-stats = snn.utils.stats()
 
-print("Training configuration:")
-print(f"  - case study: {cs.CASE_STUDY}")
-print(f"  - dropout: {'yes' if cs.DO_ENABLED else 'no'}")
-print(f"  - epochs num: {EPOCHS_NUM}")
-print(f"  - trial: {trial or 0}")
-print()
+fnetname = cs.get_fnetname(trial='')
+cmpn_name = fnetname.removesuffix('.pt') + f"_train_{fm_name}_c{C_START}-{C_STOP}-{C_STEP}"
+cmpn = sfi.Campaign(net, cs.shape_in, net.slayer, cmpn_name)
 
-for epoch in range(EPOCHS_NUM):
-    tSt = datetime.now()
+layers = cmpn.layers_info.get_injectables()[:-1]
+for c in range(C_START, C_STOP + 1, C_STEP):
+    fc = []
+    for lay in layers:
+        fm = fm_type()
+        sl = np.prod(cmpn.layers_info.get_shapes(fm.is_synaptic(), lay))
+        fcl = sfi.ff.Fault.multiple_random(fm, int(c * sl / 100.), [lay])
+        fc.append(fcl)
 
-    for i, (_, input, target, label) in enumerate(cs.train_loader, 0):
-        input = input.to(device)
-        target = target.to(device)
+    cmpn.then_inject(fc)
 
-        output = net.forward(input)
+print(cmpn)
+faulties = cmpn.run_train(EPOCHS_NUM, cs.train_loader, optimizer, spike_loss)
 
-        stats.training.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
-        stats.training.numSamples += len(label)
+for faulty in faulties:
+    cmpn.save_faulty(faulty)
 
-        loss = error.numSpikes(output, target)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+cmpn.save()
 
-        # Update stats
-        stats.training.lossSum += loss.cpu().data.item()
-        stats.print(epoch, i, (datetime.now() - tSt).total_seconds())
-
-    # Testing
-    for i, (_, input, target, label) in enumerate(cs.test_loader, 0):
-        input = input.to(device)
-        target = target.to(device)
-
-        output = net.forward(input)
-
-        stats.testing.correctSamples += torch.sum(snn.predict.getClass(output) == label).data.item()
-        stats.testing.numSamples += len(label)
-
-        loss = error.numSpikes(output, target)
-        stats.testing.lossSum += loss.cpu().data.item()
-        stats.print(epoch, i)
-
-    stats.update()
-
-    # Save trained network (based on the best testing accuracy)
-    if stats.testing.accuracyLog[-1] == stats.testing.maxAccuracy:
-        torch.save(net, os.path.join(cs.OUT_DIR, cs.get_fnetname(trial)))
-
-# Save statistics
-with open(os.path.join(cs.OUT_DIR, cs.get_fstaname(trial)), 'wb') as stats_file:
-    pickle.dump(stats, stats_file)
-
-# Plot and save the training results
-plt.figure()
-plt.plot(range(1, EPOCHS_NUM + 1), torch.Tensor(stats.training.accuracyLog) * 100., 'b--', label='Training')
-plt.plot(range(1, EPOCHS_NUM + 1), torch.Tensor(stats.testing.accuracyLog) * 100., 'g-', label='Testing')
-plt.xlabel('Epoch #')
-plt.ylabel('Accuracy (%)')
-plt.legend(loc='lower right')
-plt.xticks(ticks=[1] + list(range(10, EPOCHS_NUM + 1, 10)))
-plt.xticks(ticks=range(2, EPOCHS_NUM + 1, 2), minor=True)
-plt.yticks(ticks=range(0, 101, 10))
-plt.yticks(ticks=range(0, 100, 2), minor=True)
-plt.grid(visible=True, which='both', axis='both')
-plt.xlim((1, EPOCHS_NUM))
-plt.ylim((0., 100.))
-plt.savefig(os.path.join(cs.OUT_DIR, cs.get_ffigname(trial)))
+sfi.visual.learning_curve([cmpn.export()])

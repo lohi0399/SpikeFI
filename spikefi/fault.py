@@ -4,6 +4,7 @@ from enum import auto, Flag
 from math import log2
 from functools import reduce
 from operator import or_
+import random
 
 from torch import Tensor
 
@@ -136,21 +137,18 @@ class FaultModel:
 
 
 class Fault:
-    def __init__(self, model: FaultModel, sites: FaultSite | Iterable[FaultSite] = None, random_sites_num: int = 0) -> None:
+    def __init__(self, model: FaultModel, sites: FaultSite | Iterable[FaultSite] = None) -> None:
         self.model = model
         self.sites: set[FaultSite] = set()
         self.sites_pending: list[FaultSite] = []
 
-        if sites is None and not random_sites_num:
+        if sites is None:
             return
 
         if isinstance(sites, Iterable):
             self.update_sites(sites)
         else:
             self.add_site(sites)
-
-        if random_sites_num:
-            self.sites_pending.extend([FaultSite() for _ in range(random_sites_num)])
 
     def __add__(self, other: 'Fault') -> 'Fault':
         assert self.model == other.model, 'Only two Faults with the same Fault Model can be added'
@@ -207,6 +205,9 @@ class Fault:
 
         return separated_faults
 
+    def has_site(self, site: FaultSite) -> bool:
+        return site in self.sites
+
     def get_sites(self, include_pending: bool = False) -> list[FaultSite]:
         return list(self.sites) + (self.sites_pending if include_pending else [])
 
@@ -215,6 +216,14 @@ class Fault:
 
     def is_multiple(self) -> bool:
         return len(self) > 1
+
+    @staticmethod
+    def multiple_random(model: FaultModel, sites_num: int, layers: list[str] = None) -> 'Fault':
+        sites = []
+        for _ in range(sites_num):
+            sites.append(FaultSite(random.choice(layers)) if layers else FaultSite())
+
+        return Fault(model, sites)
 
     def refresh(self, discard_duplicates: bool = False) -> None:
         newly_defined = []
@@ -334,6 +343,18 @@ class FaultRound(dict):  # dict[tuple[str, FaultModel], Fault]
 
         for f in faults:
             self.insert(f)
+
+    def get_faults(self, target: FaultTarget = FaultTarget.all()) -> list[Fault]:
+        return [self[k] for k in self if k[1].target in target]
+
+    def get_neuronal(self) -> list[Fault]:
+        return self.get_faults(FaultTarget.neuronal())
+
+    def get_parametric(self) -> list[Fault]:
+        return self.get_faults(FaultTarget.parametric())
+
+    def get_synaptic(self) -> list[Fault]:
+        return self.get_faults(FaultTarget.synaptic())
 
     def search(self, layer_name: str, target: FaultTarget = FaultTarget.all()) -> list[Fault]:
         return [self[k] for k in self if k[0] == layer_name and k[1].target in target]

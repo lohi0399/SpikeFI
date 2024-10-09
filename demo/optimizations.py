@@ -9,6 +9,7 @@ import slayerSNN as snn
 import spikefi as sfi
 import demo as cs
 
+
 fm_type = sfi.fm.DeadNeuron
 fm_name = "neuron_dead"
 L = ['SC1']  # 'SF2', 'SF1', 'SC3', 'SC2', 'SC1', ''
@@ -70,7 +71,7 @@ for lay_name in L:
                 durations = []
                 N_critical = []
                 for t in T or [0]:
-                    cri = cmpn.run(test_loader, error=snn.loss(cs.net_params).to(cmpn.device),
+                    cri = cmpn.run(test_loader, spike_loss=snn.loss(cs.net_params).to(cmpn.device),
                                    es_tol=t, opt=sfi.CampaignOptimization(o))
 
                     durations.append(cmpn.duration)

@@ -7,9 +7,11 @@ import spikefi as sfi
 import demo as cs
 
 
+# TODO: Verify that all demos are bug-free
+
 CMPN_SEL = 2
 
-fnetname = cs.get_fnetname()
+fnetname = cs.get_fnetname(trial=2)
 net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.CASE_STUDY, fnetname))
 net.eval()
 
@@ -38,7 +40,7 @@ if CMPN_SEL == 1:
     cmpn1.eject(round_idx=1)
 
     print(cmpn1)
-    cmpn1.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn1.device),
+    cmpn1.run(cs.test_loader, spike_loss=snn.loss(cs.net_params).to(cmpn1.device),
               opt=sfi.CampaignOptimization.O4)
 
     cmpn1.save()
@@ -46,12 +48,12 @@ if CMPN_SEL == 1:
 
 elif CMPN_SEL == 2:
     cmpn2 = sfi.Campaign(net, cs.shape_in, net.slayer,
-                         name=fnetname.removesuffix('.pt') + '_synapse_dead_SF1')
+                         name=fnetname.removesuffix('.pt') + '_test')
 
-    cmpn2.inject_complete(sfi.fm.DeadSynapse(), layer_names=['SF1'])
+    cmpn2.inject_complete(sfi.fm.DeadNeuron(), layer_names=['SF2'])
 
     print(cmpn2.name)
-    cmpn2.run(cs.test_loader, error=snn.loss(cs.net_params).to(cmpn2.device))
+    cmpn2.run(cs.test_loader, spike_loss=snn.loss(cs.net_params).to(cmpn2.device))
 
     cmpn2.save()
     print(f"{cmpn2.duration : .2f} secs")
