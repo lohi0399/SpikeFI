@@ -5,7 +5,9 @@ from math import prod, sqrt
 import matplotlib as mpl
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 import numpy as np
+import re
 import torch
 
 from spikefi.core import CampaignData
@@ -14,6 +16,7 @@ from spikefi.utils.io import make_fig_filepath
 
 
 CMAP = 'jet'
+CPAL = ["#02580E", "#9C7720", "#104280", "#B7312C", "#DC996C", "#5F1B08", "#FFD19E"]
 
 
 def _data_mapping(cmpns_data: list[CampaignData], layer: str = None,
@@ -39,9 +42,7 @@ def _data_mapping(cmpns_data: list[CampaignData], layer: str = None,
 
 
 def _earth_palette() -> None:
-    mpl.rcParams['axes.prop_cycle'] = cycler('color', [
-        "#02580E", "#9C7720", "#104280", "#B7312C", "#DC996C", "#5F1B08", "#FFD19E"
-        ])
+    mpl.rcParams['axes.prop_cycle'] = cycler('color', CPAL)
 
 
 def _shape_square(N: int) -> tuple[int, int]:
@@ -285,10 +286,37 @@ def plot(cmpns_data: list[CampaignData], xlabel: str = '', layer: str = None,
     return fig
 
 
-def learning_curve(cmpns_data: list[CampaignData], fig_size: tuple[float, float] = None, 
-                   title_suffix: str = None, format: str = 'svg') -> None:
-    figs = list()
+def plot_train(cmpns_data: list[CampaignData], x_range: range, fig_size: tuple[float, float] = None,
+               title_suffix: str = None, format: str = 'svg') -> Figure:
+    accu = [[perf.training.maxAccuracy for perf in cmpn_data.performance] for cmpn_data in cmpns_data]
+    mean_accu = np.array(accu).mean(axis=0)
 
+    x_slice = slice(None) if x_range[0] else slice(1, None, None)
+
+    fig = plt.figure(figsize=fig_size)
+    _earth_palette()
+    if not x_range[0]:
+        plt.axhline(y=mean_accu[0] * 100., label='Golden', color=CPAL[1])
+    plt.plot(x_range[x_slice], mean_accu[x_slice] * 100., marker='d', linestyle='-', linewidth=0.7, label='Faulty')
+    plt.gca().yaxis.set_minor_locator(MultipleLocator(10))
+    plt.ylim([60, 100])
+    plt.xlim([x_range[x_slice][0], x_range[-1]])
+    plt.xlabel('Dead neurons (%)')
+    plt.ylabel('Mean classification accuracy (%)')
+    plt.legend()
+
+    if title_suffix:
+        title_suffix = "_" + title_suffix.strip('_')
+    common_name = re.sub(r'(_net)\d+', r'\1', cmpns_data[0].name)
+    plot_path = make_fig_filepath(f"{common_name}_mean{title_suffix or ''}.{format.strip('.')}")
+    plt.savefig(plot_path, bbox_inches='tight', transparent=False)
+
+    return fig
+
+
+def learning_curve(cmpns_data: list[CampaignData], fig_size: tuple[float, float] = None,
+                   title_suffix: str = None, format: str = 'svg') -> list[Figure]:
+    figs = list()
     for cmpn_data in cmpns_data:
         for r, perf in enumerate(cmpn_data.performance):
             epochs = len(perf.training.accuracyLog)
@@ -316,3 +344,5 @@ def learning_curve(cmpns_data: list[CampaignData], fig_size: tuple[float, float]
             plt.savefig(plot_path, bbox_inches='tight', transparent=False)
 
             figs.append(fig)
+
+    return figs
