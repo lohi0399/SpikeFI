@@ -3,7 +3,7 @@ __all__ = ["bitflip", "example", "optimizations", "parametric", "train_golden", 
 
 import os
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 import slayerSNN as snn
 
@@ -66,6 +66,8 @@ test_set = Dataset(
     sampling_time=net_params['simulation']['Ts'],
     sample_length=net_params['simulation']['tSample'])
 test_loader = DataLoader(dataset=test_set, batch_size=batch_size, shuffle=shuffle, num_workers=4)
+
+single_loader = DataLoader(TensorDataset(*next(iter(test_loader))), batch_size=batch_size, shuffle=False)
 
 trial_def = sfi.utils.io.calculate_trial(base_fname + '_.pt', OUT_DIR)
 

@@ -2,12 +2,13 @@ import os
 import torch
 
 import slayerSNN as snn
+import torch.utils
 
 import spikefi as sfi
 import demo as cs
 
 
-# TODO: Verify that all demos are bug-free
+# TODO: Verify that all demos are bug-free (use the single loader for testing)
 
 CMPN_SEL = 2
 
@@ -21,8 +22,8 @@ s3 = sfi.ff.FaultSite('SC2', (slice(None), 2, 2, 0))
 f1 = sfi.ff.Fault(sfi.fm.DeadNeuron(), s1)
 f2 = sfi.ff.Fault(sfi.fm.SaturatedNeuron(), s2)
 f3 = sfi.ff.Fault(sfi.fm.DeadNeuron(), s3)
-f4 = sfi.ff.Fault(sfi.fm.SaturatedSynapse(2.), random_sites_num=1)
-f5 = sfi.ff.Fault(sfi.fm.DeadNeuron(), random_sites_num=2)
+f4 = sfi.ff.Fault.multiple_random(sfi.fm.SaturatedSynapse(3.), 2)
+f5 = sfi.ff.Fault.multiple_random(sfi.fm.DeadNeuron(), 5)
 f6 = sfi.ff.Fault(sfi.fm.ParametricNeuron('theta', 0.5), [sfi.ff.FaultSite('SC1'), sfi.ff.FaultSite('SC1')])
 f7 = sfi.ff.Fault(sfi.fm.ParametricNeuron('tauSr', 0.1), sfi.ff.FaultSite('SC2'))
 f8 = sfi.ff.Fault(sfi.fm.SaturatedNeuron(), [sfi.ff.FaultSite('SC2')])

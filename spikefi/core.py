@@ -337,6 +337,7 @@ class Campaign:
         # Decide optimization level
         if len(self.rounds) <= 1:
             evaluate_method = self._evaluate_single
+            opt = CampaignOptimization.O0
         else:
             if opt.value >= CampaignOptimization.O2.value:
                 evaluate_method = self._evaluate_optimized
@@ -623,6 +624,12 @@ class Campaign:
         def forward_opt(self: nn.Module, spikes_in: Tensor, start_layer_idx: int = None, end_layer_idx: int = None) -> Tensor:
             start_idx = 0 if start_layer_idx is None else start_layer_idx
             end_idx = (len(layers_info) - 1) if end_layer_idx is None else end_layer_idx
+
+            if start_idx < 0:
+                start_idx = len(layers_info) + start_idx
+            if end_idx < 0:
+                end_idx = len(layers_info) + end_idx
+
             subject_layers = [lay_name for lay_idx, lay_name in enumerate(layers_info.order)
                               if start_idx <= lay_idx <= end_idx]
 
@@ -640,11 +647,9 @@ class Campaign:
         return forward_opt
 
     def _neuron_pre_hook_wrapper(self, layer_name: str, faults: list[ff.Fault] = None) -> Callable[[nn.Module, tuple[Tensor, ...]], None]:
-        lay_shape_neu = self.layers_info.shapes_neu[layer_name]
-
         def neuron_pre_hook(_, args: tuple[Tensor, ...]) -> None:
             prev_spikes_out = args[0]
-            if prev_spikes_out.shape[1:4] != lay_shape_neu:
+            if prev_spikes_out.shape[1:4] != self.layers_info.shapes_neu[layer_name]:
                 return
 
             for fault in faults or self.orounds[self.r_idx].search_neuronal(layer_name):

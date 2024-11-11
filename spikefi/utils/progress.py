@@ -30,14 +30,14 @@ class CampaignProgress:
             border = re.sub(r'[^+\n]', '-', s.replace('|', '+'))
             s = border + s
 
-            s += f"| {self.loss:<7.3f} | {self.accu * 100.:6.3f} % | {e:3d}/{self.epochs:<3d}"
+            s += f"| {self.loss:<7.3f} | {self.accu * 100.:6.3f} % | {e:3d}/{self.epochs:<3d} "
         else:
             border = re.sub(r'[^+\n]', '-', s.replace('|', '+'))
             s = border + s
 
         b = self.batch + 1 if self.batch + 1 <= self.batch_num else self.batch_num
 
-        s += f" | {b:4d}/{self.batch_num:<4d} | "
+        s += f"| {b:4d}/{self.batch_num:<4d} | "
         if self.start_time:
             s += f"{(time() - self.start_time):6.0f} sec | "
         s += f"{self.status * 100.:6.2f} % |\n"
