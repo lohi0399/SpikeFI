@@ -12,8 +12,9 @@ C_START = 5
 C_STOP = 35
 C_STEP = 5
 
-fm_type = sfi.fm.DeadNeuron
-fm_name = "neuron_dead"
+fm_type = sfi.fm.PerturbedSynapse
+fm_name = "synapse_perturbed"
+fm_argu = (0.5,)
 
 # Generalized network/dataset initialization
 device = torch.device('cuda')
@@ -29,8 +30,8 @@ cmpn = sfi.Campaign(net, cs.shape_in, net.slayer, cmpn_name)
 layers = cmpn.layers_info.get_injectables()[:-1]
 for c in range(C_START, C_STOP + 1, C_STEP):
     fc = []
-    for lay in layers:
-        fm = fm_type()
+    for lay in [layers[-1]]:
+        fm = fm_type(*fm_argu)
         sl = np.prod(cmpn.layers_info.get_shapes(fm.is_synaptic(), lay))
         fcl = sfi.ff.Fault.multiple_random(fm, int(c * sl / 100.), [lay])
         fc.append(fcl)
@@ -38,7 +39,7 @@ for c in range(C_START, C_STOP + 1, C_STEP):
     cmpn.then_inject(fc)
 
 print(cmpn)
-faulties = cmpn.run_train(EPOCHS_NUM, cs.train_loader, optimizer, spike_loss)
+faulties = cmpn.run_train(EPOCHS_NUM, cs.single_loader, optimizer, spike_loss)
 
 for faulty in faulties:
     cmpn.save_faulty(faulty)

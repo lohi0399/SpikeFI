@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from copy import deepcopy
+import random
 
 import torch
 from torch import Tensor
@@ -114,6 +115,12 @@ class DeadSynapse(FaultModel):
 class SaturatedSynapse(FaultModel):
     def __init__(self, satu: float) -> None:
         super().__init__(FaultTarget.WEIGHT, set_value, satu)
+
+
+class PerturbedSynapse(FaultModel):
+    def __init__(self, alpha: float):
+        rho = random.uniform(-alpha, alpha)
+        super().__init__(FaultTarget.WEIGHT, mul_value, rho)
 
 
 class BitflippedSynapse(FaultModel):
