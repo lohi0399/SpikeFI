@@ -138,9 +138,10 @@ data/datasets
 
 # Output
 out/
+paper/
 
 # Pickle files
 *.pkl
 
-# Playground script
-playground.py
+# Jupyter notebooks
+*.ipynb

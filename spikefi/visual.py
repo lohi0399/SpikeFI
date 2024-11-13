@@ -45,12 +45,12 @@ def _earth_palette() -> None:
     mpl.rcParams['axes.prop_cycle'] = cycler('color', CPAL)
 
 
-def _shape_square(N: int) -> tuple[int, int]:
-    x = int(sqrt(N))
-    while N % x != 0:
-        x -= 1
+def _heat_reshape(N: int, R: float) -> tuple[int, int]:
+    a = int(sqrt(N * R))
+    while N % a:
+        a -= 1
 
-    return (x, int(N / x))
+    return (a, int(N / a))
 
 
 def _title(cmpns_data: list[CampaignData], data_map: dict,
@@ -137,7 +137,7 @@ def bar(cmpns_data: list[CampaignData],
     return fig
 
 
-def colormap(format: str = 'svg') -> None:
+def colormap(format: str = 'svg') -> Figure:
     fig = plt.figure()
     fig.set_size_inches(fig.get_figwidth(), 1)
 
@@ -151,9 +151,11 @@ def colormap(format: str = 'svg') -> None:
     plot_path = make_fig_filepath(filename="colormap." + format.removeprefix('.'))
     plt.savefig(plot_path, transparent=True)
 
+    return fig
+
 
 def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.FaultModel = None,
-         preserve_dim: bool = False, max_area: int = 512**2, show_axes: bool = True,
+         preserve_dim: bool = False, ratio: float = 1.0, max_area: int = 512**2, show_axes: bool = True,
          model_friendly: str = None, fig_size: tuple[float, float] = None,
          title_suffix: str = None, format: str = 'svg') -> list[Figure]:
     figs = []
@@ -195,7 +197,7 @@ def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.Faul
                 plot_shape = (shape[1] * shape[2], shape[0])
 
         if not preserve_dim or plot_shape[0] > sqrt(max_area) or plot_shape[1] > sqrt(max_area):
-            plot_shape = _shape_square(N)
+            plot_shape = _heat_reshape(N, ratio or 1.0)
 
         fig = plt.figure(str((lay, fm)), figsize=fig_size)
 
@@ -204,7 +206,7 @@ def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.Faul
         fig.set_size_inches(wx * fig.get_figwidth(), hx * fig.get_figheight())
 
         pos = plt.imshow(perf.reshape(*plot_shape), cmap=CMAP,
-                         origin='lower', vmin=0., vmax=1., interpolation='none',
+                         origin='lower', vmin=0., vmax=1., interpolation='nearest',
                          extent=[0, plot_shape[1], 0, plot_shape[0]])
 
         pos.axes.set_xticks([1] + np.arange(10, plot_shape[1] + 1, 10).tolist())
@@ -231,6 +233,7 @@ def heat(cmpns_data: list[CampaignData], layer: str = None, fault_model: ff.Faul
 
 
 def plot(cmpns_data: list[CampaignData], xlabel: str = '', layer: str = None,
+         legend_loc: str = "lower right",
          model_friendly: str = None, fig_size: tuple[float, float] = None,
          title_suffix: str = None, format: str = 'svg') -> Figure:
     data_map = _data_mapping(cmpns_data, layer)
@@ -278,7 +281,7 @@ def plot(cmpns_data: list[CampaignData], xlabel: str = '', layer: str = None,
         plt.grid(visible=True, which='major', axis='y', alpha=0.5)
         plt.grid(visible=True, which='minor', axis='y', linestyle='dotted')
 
-    plt.legend(loc="lower right")
+    plt.legend(loc=legend_loc)
 
     plot_path = make_fig_filepath(_title(cmpns_data, data_map, model_friendly, "scatter", title_suffix, format))
     plt.savefig(plot_path, bbox_inches='tight', transparent=False)
