@@ -27,11 +27,6 @@ from spikefi.utils.layer import LayersInfo
 from spikefi.utils.progress import CampaignProgress, refresh_progress_job
 
 
-# TODO: Fix long lines
-# TODO: Logging
-# TODO: Parallelize fault rounds evaluation
-
-
 VERSION = '1.0.0'
 
 
@@ -702,7 +697,6 @@ class Campaign:
         return synaptic_hook
 
 
-# TODO: Save pickle with models in cpu and move them to device when loading
 class CampaignData:
     def __init__(self, version: str, campaign: Campaign) -> None:
         self.version = version

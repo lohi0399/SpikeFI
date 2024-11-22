@@ -10,8 +10,6 @@ import slayerSNN as snn
 import spikefi as sfi
 
 
-# TODO: Move parameters to a configuration file
-
 # Configuration parameters (modify depending on application)
 CASE_STUDY = 'nmnist-lenet'  # 'nmnist-lenet' # 'nmnist-deep' # 'gesture'
 DO_ENABLED = False

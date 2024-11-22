@@ -8,8 +8,6 @@ import spikefi as sfi
 import demo as cs
 
 
-# TODO: Verify that all demos are bug-free (use the single loader for testing)
-
 CMPN_SEL = 2
 
 fnetname = cs.get_fnetname(trial=2)
