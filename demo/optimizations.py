@@ -1,6 +1,6 @@
 from copy import copy
+import csv
 import os
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
@@ -82,8 +82,10 @@ for lay_name in L:
                         print(f"Critical faults #: {N_critical[-1]}")
 
                 if len(T) > 1:
-                    df = pd.DataFrame({'tolerance': T, 'duration': durations, 'N_critical': N_critical})
-                    df.to_csv(os.path.join(sfi.utils.io.RES_DIR, cmpn_name + '_tol.csv'), index=False)
+                    with open(os.path.join(sfi.utils.io.RES_DIR, cmpn_name + '_tol.csv'), mode='w', newline='') as file:
+                        writer = csv.writer(file)
+                        writer.writerow(['tolerance', 'duration', 'N_critical'])
+                        writer.writerows(list(zip(T, durations, N_critical)))
 
                 rounds = copy(cmpn.rounds)
                 cmpn.save()

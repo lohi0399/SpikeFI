@@ -15,7 +15,6 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-from cycler import cycler
 from difflib import SequenceMatcher
 from itertools import cycle
 from math import prod, sqrt
@@ -59,7 +58,7 @@ def _data_mapping(cmpns_data: list[CampaignData], layer: str = None,
 
 
 def _earth_palette() -> None:
-    mpl.rcParams['axes.prop_cycle'] = cycler('color', CPAL)
+    mpl.rcParams['axes.prop_cycle'] = [{'color': c} for c in CPAL]
 
 
 def _heat_reshape(N: int, R: float) -> tuple[int, int]:
