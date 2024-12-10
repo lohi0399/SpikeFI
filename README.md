@@ -13,23 +13,32 @@ Neuromorphic computing and spiking neural networks (SNNs) are gaining traction a
 
 ## Publication
 
-The article introducing *SpikeFI* has been submitted to IEEE for possible publication. A preprint version is available on arXiv [here]().
+The article introducing *SpikeFI* has been submitted to IEEE for possible publication. A preprint version is available on HAL [here](https://hal.science/hal-04825966).
 
 ### Citation
 
 To reference our work, please use the following citation:
 
-> T. Spyrou, S. Hamdioui and H.-G. Stratigopoulos, "SpikeFI: A Fault Injection Framework for Spiking Neural Networks," \*arXiv preprint\*
+> T. Spyrou, S. Hamdioui and H.-G. Stratigopoulos, "SpikeFI: A Fault Injection Framework for Spiking Neural Networks," 2024, preprint ⟨hal-04825966⟩
 
 ```bibtex
-@article{Spyrou2024,
-  author       = {Spyrou, T. and Hamdioui, S. and Stratigopoulos, H.-G.},
-  title        = {{SpikeFI}: A Fault Injection Framework for Spiking Neural Networks},
-  journal      = {arXiv preprint},
-  year         = 2024,
-  archivePrefix = {arXiv}
+@unpublished{spyrou:hal-04825966,
+  title = {{SpikeFI: A Fault Injection Framework for Spiking Neural Networks}},
+  author = {Spyrou, T. and Hamdioui, S. and Stratigopoulos, H.-G.},
+  url = {https://hal.science/hal-04825966},
+  note = {preprint},
+  year = {2024},
+  month = Dec,
+  keywords = {Neuromorphic Computing ; Neuromorphic Computing ; Spiking Neural Networks ; Reliability ; Fault Simulation ; Testing ; Fault Tolerance},
+  pdf = {https://hal.science/hal-04825966v1/file/SpikeFI__A_Fault_Injection_Framework_for_Spiking_Neural_Networks.pdf},
+  hal_id = {hal-04825966},
+  hal_version = {v1},
 }
 ```
+
+## Acknowledgments
+This work was funded by the ANR RE-TRUSTING project under Grant No ANR-21-CE24-0015-03 and by the European Network of Excellence dAIEDGE under Grant Agreement No 101120726. The work of T. Spyrou was supported by the Sorbonne Center for Artificial Intelligence (SCAI) through Fellowship.
+
 
 ## Installation
 
