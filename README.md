@@ -19,20 +19,17 @@ The article introducing *SpikeFI* has been submitted to IEEE for possible public
 
 To reference our work, please use the following citation:
 
-> T. Spyrou, S. Hamdioui and H.-G. Stratigopoulos, "SpikeFI: A Fault Injection Framework for Spiking Neural Networks," 2024, preprint ⟨hal-04825966⟩
+> T. Spyrou, S. Hamdioui and H.-G. Stratigopoulos, "SpikeFI: A Fault Injection Framework for Spiking Neural Networks," arXiv, 2024, https://arxiv.org/abs/2412.06795
 
 ```bibtex
-@unpublished{spyrou:hal-04825966,
-  title = {{SpikeFI: A Fault Injection Framework for Spiking Neural Networks}},
-  author = {Spyrou, T. and Hamdioui, S. and Stratigopoulos, H.-G.},
-  url = {https://hal.science/hal-04825966},
-  note = {preprint},
-  year = {2024},
-  month = Dec,
-  keywords = {Neuromorphic Computing ; Neuromorphic Computing ; Spiking Neural Networks ; Reliability ; Fault Simulation ; Testing ; Fault Tolerance},
-  pdf = {https://hal.science/hal-04825966v1/file/SpikeFI__A_Fault_Injection_Framework_for_Spiking_Neural_Networks.pdf},
-  hal_id = {hal-04825966},
-  hal_version = {v1},
+@misc{spyrou2024spikefi,
+      title={SpikeFI: A Fault Injection Framework for Spiking Neural Networks}, 
+      author={Theofilos Spyrou and Said Hamdioui and Haralampos-G. Stratigopoulos},
+      year={2024},
+      eprint={2412.06795},
+      archivePrefix={arXiv},
+      primaryClass={cs.NE},
+      url={https://arxiv.org/abs/2412.06795}, 
 }
 ```
 
@@ -96,10 +93,11 @@ The *nets* subpackage of the *demo* package contains the network classes (define
 
 ## License & Copyright
 
-Copyright 2024 Theofilos Spyrou, Sorbonne Université, CNRS, LIP6
-
-*SpikeFI* is free software: you can redistribute it and/or modify it under the terms of GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
+Theofilos Spyrou is the Author of the Software <br>
+Copyright 2024 Sorbonne Université, Centre Nationale de la Recherche Scientifique
+ 
+*SpikeFI* is free software: you can redistribute it and/or modify it under the terms of GNU General Public License version 3 as published by the Free Software Foundation.
+ 
 *SpikeFI* is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License along with this program. If not, see http://www.gnu.org/licenses/.
+ 
+You will found in the LICENSE file a copy of the GNU General Public License version 3.
