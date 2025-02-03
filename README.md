@@ -188,6 +188,8 @@ pip install -r requirements.txt
 
 
 cuda/11.7
+
 python 10.0 >
+
 devtools/11
 
