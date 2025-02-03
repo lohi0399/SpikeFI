@@ -101,3 +101,93 @@ Copyright 2024 Sorbonne Université, Centre Nationale de la Recherche Scientifiq
 *SpikeFI* is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
  
 You will found in the LICENSE file a copy of the GNU General Public License version 3.
+
+
+
+Since **Slayer** is not available on PyPI and you have it working locally, there are multiple ways to use it in my new project.
+
+---
+
+### **1. Install Slayer as a Local Package**
+If your Slayer repo is inside your local machine, navigate to its directory and install it inside your virtual environment --> This is what I did:
+
+```sh
+cd /path/to/slayerPytorch
+pip install -e .
+```
+
+This installs it in **editable mode**, meaning any changes in Slayer’s code will automatically reflect in your project without needing reinstallation.
+
+Then, in your new project, you can simply:
+
+```python
+import slayerPytorch as slayer
+```
+
+---
+
+### **2. Add Slayer as a Git Submodule**
+If you want to keep Slayer inside your new project but still track updates separately:
+
+Inside your new project directory:
+
+```sh
+git submodule add https://github.com/<username>/slayerPytorch.git external/slayerPytorch
+```
+
+Then install it:
+
+```sh
+pip install -e external/slayerPytorch
+```
+
+Now, Slayer’s layers will be available to your project.
+
+---
+
+### **3. Directly Clone and Reference Slayer**
+If you don’t want to install it but just want to use the modules, copy the `slayerPytorch` directory into your project and import it directly.
+
+For example:
+```
+my_project/
+│── slayerPytorch/  # Copied from the repo
+│── main.py
+│── requirements.txt
+```
+
+Now, in `main.py`:
+```python
+import slayerPytorch as slayer
+```
+
+---
+
+### **4. Use a GitHub Clone in `requirements.txt`**
+If your Slayer repo is on GitHub, you can install it directly using:
+
+In `requirements.txt` of your new project:
+```
+git+https://github.com/<username>/slayerPytorch.git
+```
+
+Then run:
+```sh
+pip install -r requirements.txt
+```
+
+---
+
+### **Which Method to Use?**
+| Method | Best for |
+|--------|---------|
+| `pip install -e .` | Local development with easy updates |
+| Git submodule | Keeping track of Slayer updates separately |
+| Copying repo | Quick and offline usage |
+| GitHub install via `requirements.txt` | Using Slayer without manually cloning |
+
+
+cuda/11.7
+python 10.0 >
+devtools/11
+
