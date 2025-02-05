@@ -10,7 +10,7 @@ import demo as cs
 from demo import shape_in, test_loader
 
 # Initialization
-fnetname = cs.get_fnetname()
+fnetname = cs.get_fnetname(trial='2')
 net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.CASE_STUDY, fnetname))
 net.eval()
 
@@ -18,7 +18,7 @@ cmpn = Campaign(net, shape_in, net.slayer)
 
 fx = Fault(DeadNeuron(), FaultSite('SF2'))
 fy = Fault(SaturatedSynapse(10), FaultSite('SF1'))
-fz = Fault(ParametricNeuron('theta', 0.5), random_sites_num=4)
+fz = Fault(ParametricNeuron('theta', 0.5))
 
 cmpn.inject([fx])
 cmpn.then_inject([fy, fz])
@@ -44,4 +44,4 @@ cmpn.inject_complete(BitflippedSynapse(7, wmin, wmax, torch.uint8), ['SF2'])
 
 cmpn.run(test_loader)
 
-visual.heat(cmpn.export())
+visual.heat([cmpn.export()])

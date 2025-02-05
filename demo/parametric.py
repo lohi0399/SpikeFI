@@ -11,7 +11,7 @@ L = ['SC3']     # 'SF2', 'SF1', 'SC3', 'SC2', 'SC1', ''
 P = ['theta', 'tauSr', 'tauRef']
 C = range(10, 301, 10)  # Percentage of nominal value
 
-fnetname = cs.get_fnetname(trial='4')
+fnetname = cs.get_fnetname(trial='2')
 net: cs.Network = torch.load(os.path.join(cs.OUT_DIR, cs.CASE_STUDY, fnetname))
 net.eval()
 
