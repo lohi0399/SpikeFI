@@ -1,3 +1,4 @@
+# This line (__all__) ensures only these modules and objects are imported when someone does 'from spikefi import *' while hiding the others
 __all__ = ["core", "fault", "ff", "models", "fm", "visual",
            "utils",
            "Campaign", "CampaignData", "CampaignOptimization"]

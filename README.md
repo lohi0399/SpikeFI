@@ -193,3 +193,7 @@ python 10.0 >
 
 devtools/11
 
+Torch version:  2.0.1+cu117
+
+CUDA version:  11.7
+

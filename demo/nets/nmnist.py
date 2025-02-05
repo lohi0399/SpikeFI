@@ -7,10 +7,10 @@ from demo.nets.neuromorphic import NDataset, NNetwork
 
 class NMNISTDataset(NDataset):
     def __getitem__(self, index):
-        input_index = int(self.samples[index, 0])
+        input_index = self.samples[index, 0].strip()
         class_label = int(self.samples[index, 1])
 
-        spikes_in = snn.io.read2Dspikes(f"{self.path}{input_index}.bs2") \
+        spikes_in = snn.io.read2Dspikes(f"{self.path}{class_label}/{input_index}.bin") \
             .toSpikeTensor(torch.zeros((2, 34, 34, self.n_time_bins)), self.sampling_time)
         desired_class = torch.zeros((10, 1, 1, 1))
         desired_class[class_label, ...] = 1

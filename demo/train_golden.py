@@ -5,6 +5,7 @@ import pickle
 import torch
 
 import slayerSNN as snn
+import torch.version
 
 import demo as cs
 
@@ -12,6 +13,11 @@ EPOCHS_NUM = 200
 
 # Generalized network/dataset initialization
 device = torch.device('cuda')
+
+print('Using device: ',device)
+print('Torch version: ',torch.__version__)
+print('CUDA version: ',torch.version.cuda)
+
 net = cs.Network(cs.net_params, cs.DO_ENABLED).to(device)
 trial = cs.trial_def
 
