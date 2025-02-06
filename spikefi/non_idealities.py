@@ -146,11 +146,6 @@ for r in range(5):  # Simulating multiple reads
 
 # Example usage 2
 
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-
-# Define the weight matrix size
 matrix_size = (5, 5)
 
 # Initialize original weights
@@ -172,12 +167,11 @@ faults = {
 # Number of iterations for fault progression
 num_iterations = 10
 
-# Create a figure for visualization
-fig, axes = plt.subplots(len(faults), num_iterations, figsize=(15, 10))
-fig.suptitle("Visualization of Memristor-Based Faults Over Iterations", fontsize=16)
+# Dictionary to store tensors at each iteration
+stored_tensors = {fault_name: [] for fault_name in faults.keys()}
 
 # Apply faults and visualize changes over iterations
-for i, (fault_name, fault) in enumerate(faults.items()):
+for fault_name, fault in faults.items():
     weights = original_weights.clone()  # Reset weights for each fault
 
     for t in range(num_iterations):
@@ -195,15 +189,25 @@ for i, (fault_name, fault) in enumerate(faults.items()):
         elif fault_name == "Read Disturb":
             weights = fault.perturb_read_disturb(weights, 3, 0.05, sample_site)
 
-        # Plot the weight matrix for the current iteration
-        ax = axes[i, t]
-        img = ax.imshow(weights.numpy(), cmap="coolwarm", vmin=0, vmax=1)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        if t == 0:
-            ax.set_ylabel(fault_name, fontsize=12)
+        # Store the tensor (cloning ensures we don't overwrite it in future iterations)
+        stored_tensors[fault_name].append(weights.clone())
 
-# Adjust layout and show the figure
-plt.tight_layout(rect=[0, 0, 1, 0.95])
-plt.show()
+# Example: Access stored tensors (e.g., Variability fault, iteration 3)
+example_tensor = stored_tensors["Variability"][3]
+print("\nStored Tensor (Variability Fault, Iteration 3):\n", example_tensor)
 
+import pickle
+
+# Convert tensors to numpy arrays for more efficient storage
+stored_tensors_np = {
+    fault: [tensor.cpu().numpy() for tensor in tensor_list]
+    for fault, tensor_list in stored_tensors.items()
+}
+
+# Save the stored tensors to a file
+file_path = "spikefi/stored_tensors.pkl"
+with open(file_path, "wb") as f:
+    pickle.dump(stored_tensors_np, f)
+
+# Confirm the file path
+file_path
