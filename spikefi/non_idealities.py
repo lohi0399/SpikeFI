@@ -27,7 +27,7 @@ class IRDropFault(FaultModel):
     based on their position in the crossbar (closer to edges = more IR drop).
     """
     def __init__(self, max_drop: float, crossbar_size: tuple[int, int]):
-        super().__init__(FaultTarget.WEIGHT, self.perturb_ir_drop, max_drop, crossbar_size)
+        super().__init__(FaultTarget.WEIGHT, self.perturb_ir_drop, max_drop, crossbar_size) #  super().__init__() calls the constructor of the parent class
 
     def perturb_ir_drop(self, original_weight: Tensor, max_drop: float, size: tuple[int, int]) -> Tensor:
         rows, cols = size
