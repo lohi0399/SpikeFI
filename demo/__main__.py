@@ -17,6 +17,7 @@ net.eval()
 s1 = sfi.ff.FaultSite(layer_name='SF1')
 s2 = sfi.ff.FaultSite(layer_name='SF2')
 s3 = sfi.ff.FaultSite('SC2', (slice(None), 2, 2, 0))
+
 f1 = sfi.ff.Fault(sfi.fm.DeadNeuron(), s1)
 f2 = sfi.ff.Fault(sfi.fm.SaturatedNeuron(), s2)
 f3 = sfi.ff.Fault(sfi.fm.DeadNeuron(), s3)
