@@ -68,9 +68,9 @@ class FaultSite:
 
 
 class FaultTarget(Flag):
-    OUTPUT = Z = auto()     # 1
-    WEIGHT = W = auto()     # 2
-    PARAMETER = P = auto()  # 4
+    OUTPUT = Z = auto()     # 1 (0001)
+    WEIGHT = W = auto()     # 2 (0010)
+    PARAMETER = P = auto()  # 4 (0100)
 
     @classmethod
     def all(cls) -> 'FaultTarget':
