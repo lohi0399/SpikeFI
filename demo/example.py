@@ -31,7 +31,7 @@ for perf in cmpn.performance:
 
 # Save & Visualize
 cmpn.save()
-visual.bar(cmpn.export())
+visual.bar([cmpn.export()])
 
 # Reset and run new campaign layer-wise
 cmpn.eject()

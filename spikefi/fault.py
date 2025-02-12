@@ -94,7 +94,8 @@ class FaultTarget(Flag):
 
 class FaultModel:
     def __init__(self, target: FaultTarget, method: Callable[..., float | Tensor], *args) -> None:
-        assert len(target) == 1, 'Fault Model must have exactly 1 Fault Target'
+        # assert len(target) == 1, 'Fault Model must have exactly 1 Fault Target'
+        assert target in FaultTarget, 'Fault Model must have exactly 1 Fault Target'
         self.target = target
         self.method = method
         self.args = args
@@ -295,7 +296,8 @@ class FaultRound(dict):  # dict[tuple[str, FaultModel], Fault]
 
     def any(self, layer_name: str, target: FaultTarget = FaultTarget.all()) -> bool:
         layer_map = self.fault_map.get(layer_name, [False] * 3)
-        return any(layer_map[t.get_index()] for t in target)
+        # return any(layer_map[t.get_index()] for t in target)
+        return any(layer_map[t.get_index()] for t in FaultTarget if t in target)
 
     def any_neuronal(self, layer_name: str) -> bool:
         return self.any(layer_name, FaultTarget.neuronal())

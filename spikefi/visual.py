@@ -101,7 +101,7 @@ def _title(cmpns_data: list[CampaignData], data_map: dict,
 
 
 def bar(cmpns_data: list[CampaignData],
-        model_friendly: str = None, fig_size: tuple[float, float] = None,
+        model_friendly: str = None, fig_size: tuple[float, float] = (10,5),
         title_suffix: str = None, format: str = 'svg') -> Figure:
     data_map = _data_mapping(cmpns_data)
 
@@ -109,6 +109,12 @@ def bar(cmpns_data: list[CampaignData],
     layers = sorted(list(set(key[0] for key in data_map.keys())))
 
     fig, ax = plt.subplots()
+
+    if fig_size is None:
+        fig_size = (10, 5)  # Set default size if None
+        print("Figure size:", fig_size)  # Debugging step
+        fig.set_size_inches(fig_size)
+
     fig.set_size_inches(fig_size)
     colormap = plt.get_cmap(CMAP)
     width = 3 / len(data_map)
