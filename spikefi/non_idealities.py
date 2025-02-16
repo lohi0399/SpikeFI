@@ -1,3 +1,4 @@
+# Memristor non-ideality models.
 # This file extends fault.py and models.py to model memristor-specific faults. I basically use inheritance to define new non-idealitity models.
 # Author: Lohit Gandham
 
