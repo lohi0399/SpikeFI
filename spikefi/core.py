@@ -54,7 +54,6 @@ class CampaignOptimization(Enum):
     ES = O3 = 3     # Early Stop (implies loop-nesting 2)
     FO = O4 = 4     # Fully Optimized (all opts combined)
 
-
 class Campaign:
     def __init__(self, net: nn.Module, shape_in: tuple[int, int, int], slayer: spikeLayer, name: str = 'sfi-campaign') -> None:
         self.name = name
