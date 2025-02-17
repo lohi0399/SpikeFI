@@ -4,12 +4,12 @@ simulation:
     nSample: 12
 neuron:
     type:     SRMALPHA
-    theta:    10
-    tauSr:    10.0
-    tauRef:   1.0
-    scaleRef: 2     # relative to theta
-    tauRho:   1     # relative to theta #0.43429448190325176
-    scaleRho: 1
+    theta:    72
+    tauSr:    72
+    tauRef:   12
+    scaleRef: 18     # relative to theta
+    tauRho:   12     # relative to theta #0.43429448190325176
+    scaleRho: 12
 training:
     error:
         type: NumSpikes #ProbSpikes #NumSpikes
